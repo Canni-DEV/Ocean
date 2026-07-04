@@ -44,6 +44,12 @@ export type CelestialState = {
   moonVisibility: number;
   starVisibility: number;
   moonPhase: number;
+  /** 0-1 direct sun light/reflection mask (horizon elevation fade). */
+  sunDirectMask: number;
+  /** 0-1 direct moon light/reflection mask (horizon elevation fade). */
+  moonDirectMask: number;
+  /** Residual twilight for ambient sky and subdued water IBL. */
+  twilightFactor: number;
 };
 
 export type EnvironmentState = {

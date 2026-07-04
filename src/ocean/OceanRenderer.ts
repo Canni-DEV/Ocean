@@ -46,6 +46,7 @@ type OceanUniformNodes = {
   sunDirection: AnyUniform<THREE.Vector3>;
   sunColor: AnyUniform<THREE.Color>;
   sunVisibility: AnyUniform<number>;
+  sunDirectMask: AnyUniform<number>;
   debugHeight: AnyUniform<number>;
   debugNormal: AnyUniform<number>;
   debugFoam: AnyUniform<number>;
@@ -186,11 +187,17 @@ export class OceanRenderer {
     this.uniforms.scatterColor.value.set(environment.waterScatterColor);
     this.uniforms.sunColor.value.set(environment.sunColor);
     this.uniforms.sunVisibility.value = environment.celestial.sunVisibility;
+    this.uniforms.sunDirectMask.value = environment.celestial.sunDirectMask;
     this.uniforms.sunDirection.value.set(
       environment.celestial.sunDirection.x,
       environment.celestial.sunDirection.y,
       environment.celestial.sunDirection.z
     );
+
+    const daylight = THREE.MathUtils.smoothstep(environment.celestial.sunDirection.y, -0.08, 0.42);
+    const iblMask = Math.max(daylight, environment.celestial.twilightFactor);
+    this.material.envMapIntensity =
+      THREE.MathUtils.lerp(0.12, 1.0, iblMask) * (1 - weather.cloudCoverage * 0.5);
   }
 
   dispose(): void {
@@ -238,6 +245,7 @@ function createWaterMaterial(
     sunDirection: u(new THREE.Vector3(0, 1, 0)),
     sunColor: u(new THREE.Color("#fff1c2")),
     sunVisibility: u(1),
+    sunDirectMask: u(1),
     debugHeight: u(0),
     debugNormal: u(0),
     debugFoam: u(0),
@@ -255,6 +263,9 @@ function createWaterMaterial(
   material.metalness = 0;
   material.ior = 1.333;
   material.envMapIntensity = 1;
+
+  // Direct sun specular from scene lights is gated by sunDirectMask on the CPU;
+  // SSS and IBL are masked here so no ghost column appears below the horizon.
 
   // ------------------------------------------------------------------ vertex
   const sampleXZ = positionGeometry.xz.add(uniforms.worldOffset);
@@ -342,8 +353,17 @@ function createWaterMaterial(
   const cloudShadowFactor: NodeRef = cloudShadows
     ? cloudShadows.sampleShadow(positionWorld.xz)
     : float(1);
-  const sss = towardSun.pow(3).mul(crest).mul(uniforms.sunVisibility).mul(cloudShadowFactor);
-  const sssAmbient = crest.mul(0.06).mul(uniforms.sunVisibility).mul(cloudShadowFactor.mul(0.6).add(0.4));
+  const sss = towardSun
+    .pow(3)
+    .mul(crest)
+    .mul(uniforms.sunVisibility)
+    .mul(uniforms.sunDirectMask)
+    .mul(cloudShadowFactor);
+  const sssAmbient = crest
+    .mul(0.06)
+    .mul(uniforms.sunVisibility)
+    .mul(uniforms.sunDirectMask)
+    .mul(cloudShadowFactor.mul(0.6).add(0.4));
   material.emissiveNode = uniforms.scatterColor
     .mul(uniforms.sunColor)
     .mul(sss.mul(1.35).add(sssAmbient))

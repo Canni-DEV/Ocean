@@ -7,6 +7,7 @@ import { WeatherMap, WEATHER_DOMAIN_METERS } from "./clouds/WeatherMap";
 import { CloudShadowMap } from "./clouds/CloudShadowMap";
 import { VolumetricCloudPass, CLOUD_QUALITY } from "./clouds/VolumetricCloudPass";
 import { LightningSystem } from "./LightningSystem";
+import { directLightMask, twilightFactor } from "./celestialMask";
 
 type NodeRef = any;
 type AnyUniform<T> = any & { value: T };
@@ -255,9 +256,10 @@ export class AtmosphereSystem {
       const keyIsSun = daylight > 0.04;
       const keyDir = keyIsSun ? sun : moon;
       const keyColor = new THREE.Color(keyIsSun ? environment.sunColor : environment.moonColor);
-      const keyIntensity = keyIsSun
+      const keyIntensity = (keyIsSun
         ? THREE.MathUtils.lerp(0.25, 3.4, daylight)
-        : 0.12 * environment.celestial.moonVisibility + 0.02;
+        : 0.12 * environment.celestial.moonVisibility + 0.02) *
+        (keyIsSun ? environment.celestial.sunDirectMask : environment.celestial.moonDirectMask);
 
       this.cloudPass.updateWeather({
         cloudBaseMeters: weather.cloudBaseMeters,
@@ -282,18 +284,24 @@ export class AtmosphereSystem {
       this.cloudPass.render(options.renderer, options.camera, options.originOffsetMeters, this.weatherMap);
     }
 
-    // Lights
+    // Lights — direct contribution fades below the horizon via elevation masks
     this.sunLight.position.copy(sun).multiplyScalar(1200);
     this.sunLight.color.set(environment.sunColor);
     this.sunLight.intensity = environment.sunIntensity;
+    this.sunLight.visible = environment.celestial.sunDirectMask > 0.01;
     this.moonLight.position.copy(moon).multiplyScalar(1200);
     this.moonLight.color.set(environment.moonColor);
     this.moonLight.intensity = environment.moonIntensity;
+    this.moonLight.visible =
+      environment.celestial.moonDirectMask > 0.01 && environment.moonIntensity > 0.001;
     this.ambientLight.color.set(environment.skyZenithColor);
     this.ambientLight.groundColor.set(environment.fogColor);
     this.ambientLight.intensity = environment.ambientIntensity * 0.35 + flash * 0.5;
 
-    this.updateDisc(this.moonDisc, this.moonMaterial, options.camera, moon, environment.celestial.moonVisibility, 7600);
+    this.sky.showSunDisc.value = environment.celestial.sunDirectMask;
+
+    const moonDiscVis = environment.celestial.moonVisibility * environment.celestial.moonDirectMask;
+    this.updateDisc(this.moonDisc, this.moonMaterial, options.camera, moon, moonDiscVis, 7600);
     this.moonDisc.scale.x = THREE.MathUtils.lerp(0.35, 1, Math.sin(environment.celestial.moonPhase * Math.PI));
 
     this.stars.position.copy(options.camera.position);
@@ -436,7 +444,7 @@ export class AtmosphereSystem {
     const sun = this.computeSun(options.worldTimeHours);
     const moon = sun.clone().negate().applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.38).normalize();
     const daylight = THREE.MathUtils.smoothstep(sun.y, -0.08, 0.42);
-    const twilight = Math.exp(-Math.abs(sun.y) * 8);
+    const twilightGlow = Math.exp(-Math.abs(sun.y) * 8);
     const night = 1 - daylight;
     const cloudShadow = THREE.MathUtils.clamp(
       weather.cloudCoverage * 0.62 + weather.cloudDensity * 0.25 + weather.precipitation * 0.35,
@@ -451,7 +459,7 @@ export class AtmosphereSystem {
       .lerp(new THREE.Color("#0b0d10"), storm * 0.35);
     const horizon = new THREE.Color("#101b2b")
       .lerp(new THREE.Color("#9cc7df"), daylight)
-      .lerp(new THREE.Color("#f0a35e"), twilight * (1 - storm) * 0.55)
+      .lerp(new THREE.Color("#f0a35e"), twilightGlow * (1 - storm) * 0.55)
       .lerp(new THREE.Color("#5d666b"), cloudShadow * 0.55)
       .lerp(new THREE.Color("#22272b"), storm * 0.55);
     const fogColor = horizon.clone().lerp(new THREE.Color("#8b9292"), weather.humidity * 0.18 + storm * 0.22);
@@ -459,6 +467,9 @@ export class AtmosphereSystem {
     // analytic global attenuation is softer than it used to be.
     const sunVisibility = daylight * (1 - cloudShadow * 0.55);
     const moonVisibility = night * (1 - cloudShadow * 0.7);
+    const sunDirectMask = directLightMask(sun.y);
+    const moonDirectMask = directLightMask(moon.y);
+    const twilightResidual = twilightFactor(sun.y);
     const starVisibility = night * (1 - weather.cloudCoverage) * (1 - weather.humidity * 0.35);
     const ambientIntensity = THREE.MathUtils.lerp(0.08, 0.92, daylight) * (1 - cloudShadow * 0.55) + night * 0.07;
 
@@ -477,21 +488,24 @@ export class AtmosphereSystem {
       fogDensity: THREE.MathUtils.lerp(0.00004, 0.0028, 1 - weather.visibilityKm / 40),
       ambientColor: `#${zenith.clone().lerp(horizon, 0.28).getHexString()}`,
       ambientIntensity,
-      sunColor: `#${new THREE.Color("#fff5d0").lerp(new THREE.Color("#ff9f58"), twilight * 0.45).getHexString()}`,
-      sunIntensity: THREE.MathUtils.lerp(0.1, 3.6, sunVisibility),
+      sunColor: `#${new THREE.Color("#fff5d0").lerp(new THREE.Color("#ff9f58"), twilightGlow * 0.45).getHexString()}`,
+      sunIntensity: THREE.MathUtils.lerp(0, 3.6, sunVisibility * sunDirectMask),
       moonColor: "#b8caff",
-      moonIntensity: THREE.MathUtils.lerp(0.02, 0.36, moonVisibility),
+      moonIntensity: THREE.MathUtils.lerp(0, 0.36, moonVisibility * moonDirectMask),
       cloudShadow,
       waterAbsorptionColor: `#${absorption.getHexString()}`,
       waterScatterColor: `#${scatter.getHexString()}`,
-      exposure: THREE.MathUtils.clamp(1 + exposureBias - cloudShadow * 0.18 + twilight * 0.08, 0.45, 1.6),
+      exposure: THREE.MathUtils.clamp(1 + exposureBias - cloudShadow * 0.18 + twilightGlow * 0.08, 0.45, 1.6),
       celestial: {
         sunDirection: { x: sun.x, y: sun.y, z: sun.z },
         moonDirection: { x: moon.x, y: moon.y, z: moon.z },
         sunVisibility,
         moonVisibility,
         starVisibility,
-        moonPhase: (options.worldTimeHours % 24) / 24
+        moonPhase: (options.worldTimeHours % 24) / 24,
+        sunDirectMask,
+        moonDirectMask,
+        twilightFactor: twilightResidual
       }
     };
   }
