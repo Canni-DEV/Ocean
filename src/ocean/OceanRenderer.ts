@@ -20,6 +20,7 @@ import {
   vertexStage
 } from "three/tsl";
 import type { DebugRenderMode, DebugSettings, EnvironmentState, WeatherState } from "../engine/types";
+import type { CloudShadowMap } from "../atmosphere/clouds/CloudShadowMap";
 import type { OceanSimulation } from "./simulation/OceanSimulation";
 
 type NodeRef = any;
@@ -27,6 +28,8 @@ type NodeRef = any;
 type OceanRendererOptions = {
   scene: THREE.Scene;
   simulation: OceanSimulation;
+  /** Projected volumetric cloud shadow map (null disables per-pixel shadows). */
+  cloudShadows: CloudShadowMap | null;
 };
 
 type AnyUniform<T> = any & { value: T };
@@ -137,7 +140,7 @@ export class OceanRenderer {
     const quality = this.simulation.quality;
     this.geometry = buildRadialGrid(quality.meshRings, quality.meshSectors, quality.meshInnerRadius);
 
-    const shader = createWaterMaterial(this.simulation);
+    const shader = createWaterMaterial(this.simulation, options.cloudShadows);
     this.material = shader.material;
     this.uniforms = shader.uniforms;
     this.derivativeNodes = shader.derivativeNodes;
@@ -145,6 +148,8 @@ export class OceanRenderer {
     this.mesh = new THREE.Mesh(this.geometry, this.material);
     this.mesh.name = "FFT spectral ocean surface";
     this.mesh.frustumCulled = false;
+    // Receives the sun light's custom cloud-shadow node (projected cloud map)
+    this.mesh.receiveShadow = true;
     options.scene.add(this.mesh);
   }
 
@@ -213,7 +218,10 @@ function cascadeFades(patchSize: number): { dispEnd: number; normalEnd: number }
   };
 }
 
-function createWaterMaterial(simulation: OceanSimulation): {
+function createWaterMaterial(
+  simulation: OceanSimulation,
+  cloudShadows: CloudShadowMap | null
+): {
   material: MeshPhysicalNodeMaterial;
   uniforms: OceanUniformNodes;
   derivativeNodes: NodeRef[];
@@ -326,12 +334,16 @@ function createWaterMaterial(simulation: OceanSimulation): {
   material.roughnessNode = baseRoughness.clamp(0.02, 0.95);
 
   // Approximate subsurface scattering: sunlight transmitted through wave crests
-  // when looking toward the sun, strongest for tall thin waves.
+  // when looking toward the sun, strongest for tall thin waves. Modulated by
+  // the projected volumetric cloud shadow so patches of shade kill the glow.
   const viewDir = cameraPosition.sub(positionWorld).normalize();
   const towardSun = viewDir.negate().dot(uniforms.sunDirection).max(0);
   const crest = vHeight.mul(0.32).add(0.08).max(0);
-  const sss = towardSun.pow(3).mul(crest).mul(uniforms.sunVisibility);
-  const sssAmbient = crest.mul(0.06).mul(uniforms.sunVisibility);
+  const cloudShadowFactor: NodeRef = cloudShadows
+    ? cloudShadows.sampleShadow(positionWorld.xz)
+    : float(1);
+  const sss = towardSun.pow(3).mul(crest).mul(uniforms.sunVisibility).mul(cloudShadowFactor);
+  const sssAmbient = crest.mul(0.06).mul(uniforms.sunVisibility).mul(cloudShadowFactor.mul(0.6).add(0.4));
   material.emissiveNode = uniforms.scatterColor
     .mul(uniforms.sunColor)
     .mul(sss.mul(1.35).add(sssAmbient))

@@ -1,22 +1,43 @@
 import * as THREE from "three/webgpu";
 import { SkyMesh } from "three/addons/objects/SkyMesh.js";
-import type { DebugSettings, EnvironmentState, WeatherState } from "../engine/types";
+import { Fn, float, positionWorld, smoothstep, texture, uniform, vec4 } from "three/tsl";
+import type { DebugSettings, EnvironmentState, QualityTier, WeatherState } from "../engine/types";
+import { CloudNoiseTextures } from "./clouds/CloudNoiseTextures";
+import { WeatherMap, WEATHER_DOMAIN_METERS } from "./clouds/WeatherMap";
+import { CloudShadowMap } from "./clouds/CloudShadowMap";
+import { VolumetricCloudPass, CLOUD_QUALITY } from "./clouds/VolumetricCloudPass";
+import { LightningSystem } from "./LightningSystem";
+
+type NodeRef = any;
+type AnyUniform<T> = any & { value: T };
 
 type AtmosphereUpdateOptions = {
   renderer: THREE.WebGPURenderer;
-  camera: THREE.Camera;
+  camera: THREE.PerspectiveCamera;
   deltaSeconds: number;
   weather: WeatherState;
   worldTimeHours: number;
+  originOffsetMeters: { x: number; z: number };
+  timeSeconds: number;
 };
 
 const STAR_COUNT = 1200;
 const RAIN_COUNT = 3400;
 
+const ZERO_CLOUD_WEATHER: Partial<WeatherState> = {
+  cloudCoverage: 0,
+  cloudDensity: 0,
+  convectivity: 0,
+  precipitation: 0,
+  stormIntensity: 0
+};
+
 /**
- * Physically based sky (Preetham single-scattering via SkyMesh) with a
- * dynamic environment cubemap that feeds water reflections and scene IBL,
- * plus sun/moon lights, stars, exponential fog and rain particles.
+ * Physically based sky (Preetham single-scattering via SkyMesh) plus the
+ * volumetric cloud stack: 3D noise fields, wind-advected weather map,
+ * half-resolution raymarched clouds with temporal accumulation, projected
+ * cloud shadows on the ocean, storm lightning, sun/moon lights, stars,
+ * exponential fog, rain particles and a dynamic environment cubemap.
  */
 export class AtmosphereSystem {
   private readonly scene: THREE.Scene;
@@ -32,6 +53,20 @@ export class AtmosphereSystem {
   private readonly rainMaterial: THREE.PointsMaterial;
   private readonly envScene = new THREE.Scene();
 
+  // Volumetric cloud stack
+  private readonly cloudNoise = new CloudNoiseTextures();
+  private readonly weatherMap = new WeatherMap();
+  readonly cloudShadows: CloudShadowMap;
+  private cloudPass: VolumetricCloudPass;
+  private cloudTier: QualityTier = "medium";
+  private readonly lightning: LightningSystem;
+  private readonly envCloudDome: THREE.Mesh;
+  private readonly uEnvCloudCamAbs: AnyUniform<THREE.Vector2> = uniform(new THREE.Vector2()) as any;
+  private readonly uEnvCloudBase: AnyUniform<number> = uniform(1200) as any;
+  private readonly uEnvCloudColor: AnyUniform<THREE.Color> = uniform(new THREE.Color()) as any;
+  private readonly uEnvCloudDensity: AnyUniform<number> = uniform(0.5) as any;
+  private readonly uEnvWeatherCenter: AnyUniform<THREE.Vector2> = uniform(new THREE.Vector2()) as any;
+
   private cubeRenderTarget: THREE.CubeRenderTarget | null = null;
   private cubeCamera: THREE.CubeCamera | null = null;
   private envMapIntervalMs = 250;
@@ -39,6 +74,10 @@ export class AtmosphereSystem {
   private settings: DebugSettings | null = null;
   private showSky = true;
   private showRain = true;
+  private showClouds = true;
+  private lastCloudMs = 0;
+  private canvasWidth = 2;
+  private canvasHeight = 2;
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -83,10 +122,31 @@ export class AtmosphereSystem {
     this.rain = new THREE.Points(this.createRain(), this.rainMaterial);
     this.rain.name = "Camera-centered rain particles";
     this.rain.frustumCulled = false;
+    // Rain falls below the cloud deck: draw it after the cloud composite so
+    // heavy overcast does not attenuate nearby drops.
+    this.rain.renderOrder = 10001;
 
-    scene.add(this.sky, this.stars, this.moonDisc, this.rain);
+    this.cloudShadows = new CloudShadowMap(this.cloudNoise, this.weatherMap);
+    this.cloudPass = new VolumetricCloudPass(this.cloudNoise, this.weatherMap, CLOUD_QUALITY[this.cloudTier]);
+    this.lightning = new LightningSystem(scene);
+    this.envCloudDome = this.createEnvCloudDome();
+    this.envScene.add(this.envCloudDome);
+
+    scene.add(this.sky, this.stars, this.moonDisc, this.rain, this.cloudPass.compositeMesh);
     scene.add(this.sunLight, this.moonLight, this.ambientLight);
     scene.fog = new THREE.FogExp2(0x6f8795, 0.0009);
+
+    // Volumetric clouds replace SkyMesh's built-in 2D cloud layer entirely
+    this.sky.cloudCoverage.value = 0;
+    this.sky.cloudDensity.value = 0;
+
+    // Per-pixel cloud shadow on everything lit by the sun (the ocean)
+    this.sunLight.castShadow = true;
+    (this.sunLight.shadow as any).shadowNode = this.createSunShadowNode();
+  }
+
+  get cloudComputeMs(): number {
+    return this.lastCloudMs;
   }
 
   setEnvironmentQuality(size: number, intervalMs: number): void {
@@ -105,19 +165,38 @@ export class AtmosphereSystem {
     this.scene.environment = this.cubeRenderTarget.texture;
   }
 
+  setCloudQuality(tier: QualityTier): void {
+    if (tier === this.cloudTier) return;
+    this.cloudTier = tier;
+    this.cloudPass.dispose();
+    this.cloudPass = new VolumetricCloudPass(this.cloudNoise, this.weatherMap, CLOUD_QUALITY[tier]);
+    this.cloudPass.setSize(this.canvasWidth, this.canvasHeight);
+    this.cloudPass.setVisible(this.showSky && this.showClouds);
+    this.scene.add(this.cloudPass.compositeMesh);
+  }
+
+  resize(width: number, height: number): void {
+    this.canvasWidth = width;
+    this.canvasHeight = height;
+    this.cloudPass.setSize(width, height);
+  }
+
   applySettings(settings: DebugSettings): void {
     this.settings = settings;
     this.showSky = settings.showSky;
     this.showRain = settings.showRain;
+    this.showClouds = settings.showClouds;
     this.sky.visible = settings.showSky;
     this.moonDisc.visible = settings.showSky;
     this.stars.visible = settings.showSky;
     this.rain.visible = settings.showRain;
+    this.cloudPass.setVisible(settings.showSky && settings.showClouds);
   }
 
   update(options: AtmosphereUpdateOptions): EnvironmentState {
     const weather = options.weather;
     const environment = this.computeEnvironment(options);
+    const cloudStart = performance.now();
 
     const sun = new THREE.Vector3(
       environment.celestial.sunDirection.x,
@@ -142,9 +221,67 @@ export class AtmosphereSystem {
     this.sky.rayleigh.value = 1.6 + Math.exp(-Math.abs(sun.y) * 6) * 1.3;
     this.sky.mieCoefficient.value = 0.0045 + weather.aerosolDensity * 0.012 + weather.precipitation * 0.008;
     this.sky.mieDirectionalG.value = 0.8;
-    this.sky.cloudCoverage.value = weather.cloudCoverage;
-    this.sky.cloudDensity.value = weather.cloudDensity * (0.55 + weather.cloudDarkening * 0.45);
-    this.sky.cloudSpeed.value = 0.0001 * (1 + weather.windSpeedMs * 0.12);
+    this.sky.cloudCoverage.value = 0;
+    this.sky.cloudDensity.value = 0;
+
+    // ------------------------------------------------------ volumetric clouds
+    const cloudsEnabled = this.showSky && this.showClouds;
+    const cloudWeather = cloudsEnabled ? weather : { ...weather, ...ZERO_CLOUD_WEATHER };
+    const cameraAbsX = options.camera.position.x + options.originOffsetMeters.x;
+    const cameraAbsZ = options.camera.position.z + options.originOffsetMeters.z;
+
+    this.cloudNoise.ensureGenerated(options.renderer);
+    this.weatherMap.update(
+      options.renderer,
+      cloudWeather,
+      cameraAbsX,
+      cameraAbsZ,
+      options.deltaSeconds,
+      options.timeSeconds
+    );
+    this.cloudShadows.update(
+      options.renderer,
+      cloudWeather,
+      sun.y > -0.05 ? sun : moon,
+      this.weatherMap,
+      cameraAbsX,
+      cameraAbsZ,
+      options.originOffsetMeters
+    );
+
+    this.lightning.update(options.deltaSeconds, weather, options.camera, cloudsEnabled);
+    const flash = this.lightning.flashIntensity;
+
+    if (cloudsEnabled) {
+      const daylight = THREE.MathUtils.smoothstep(sun.y, -0.08, 0.42);
+      const keyIsSun = daylight > 0.04;
+      const keyDir = keyIsSun ? sun : moon;
+      const keyColor = new THREE.Color(keyIsSun ? environment.sunColor : environment.moonColor);
+      const keyIntensity = keyIsSun
+        ? THREE.MathUtils.lerp(0.25, 3.4, daylight)
+        : 0.12 * environment.celestial.moonVisibility + 0.02;
+
+      this.cloudPass.updateWeather({
+        cloudBaseMeters: weather.cloudBaseMeters,
+        cloudThicknessMeters: weather.cloudThicknessMeters,
+        cloudDensity: weather.cloudDensity,
+        cloudDarkening: weather.cloudDarkening,
+        cirrusAmount: weather.cirrusAmount,
+        windDirectionRad: weather.windDirectionRad
+      });
+      // Ambient scaled up to match the Preetham sky's HDR radiance range
+      this.cloudPass.updateLighting({
+        keyLightDir: keyDir,
+        keyLightColor: keyColor,
+        keyLightIntensity: keyIntensity,
+        ambientTop: new THREE.Color(environment.skyZenithColor).multiplyScalar(5.2),
+        ambientBottom: new THREE.Color(environment.skyHorizonColor).multiplyScalar(3.4),
+        fogColor: new THREE.Color(environment.fogColor).multiplyScalar(2.2),
+        fogDensity: environment.fogDensity
+      });
+      this.cloudPass.updateLightning(this.lightning.getCloudLights());
+      this.cloudPass.render(options.renderer, options.camera, options.originOffsetMeters, this.weatherMap);
+    }
 
     // Lights
     this.sunLight.position.copy(sun).multiplyScalar(1200);
@@ -155,7 +292,7 @@ export class AtmosphereSystem {
     this.moonLight.intensity = environment.moonIntensity;
     this.ambientLight.color.set(environment.skyZenithColor);
     this.ambientLight.groundColor.set(environment.fogColor);
-    this.ambientLight.intensity = environment.ambientIntensity * 0.35;
+    this.ambientLight.intensity = environment.ambientIntensity * 0.35 + flash * 0.5;
 
     this.updateDisc(this.moonDisc, this.moonMaterial, options.camera, moon, environment.celestial.moonVisibility, 7600);
     this.moonDisc.scale.x = THREE.MathUtils.lerp(0.35, 1, Math.sin(environment.celestial.moonPhase * Math.PI));
@@ -170,10 +307,24 @@ export class AtmosphereSystem {
       fog.density = environment.fogDensity;
     }
 
+    // Environment cubemap cloud dome (cheap clouds for water reflections)
+    this.envCloudDome.visible = cloudsEnabled && weather.cloudCoverage > 0.02;
+    this.uEnvWeatherCenter.value.copy(this.weatherMap.domainCenterAbs);
+    this.uEnvCloudCamAbs.value.set(cameraAbsX, cameraAbsZ);
+    this.uEnvCloudBase.value = weather.cloudBaseMeters;
+    this.uEnvCloudDensity.value = weather.cloudDensity * (0.5 + weather.cloudDarkening * 0.5);
+    this.uEnvCloudColor.value
+      .set(environment.skyHorizonColor)
+      .lerp(new THREE.Color(environment.skyZenithColor), 0.4)
+      .multiplyScalar(THREE.MathUtils.lerp(1.05, 0.4, weather.cloudDarkening));
+
     this.updateRain(options, environment);
     this.updateEnvironmentMap(options.renderer);
 
-    return environment;
+    this.lastCloudMs = performance.now() - cloudStart;
+
+    // Lightning flash also lifts the exposure briefly
+    return { ...environment, exposure: environment.exposure + flash * 0.14 };
   }
 
   dispose(): void {
@@ -186,6 +337,13 @@ export class AtmosphereSystem {
     this.rain.geometry.dispose();
     this.rainMaterial.dispose();
     this.cubeRenderTarget?.dispose();
+    this.cloudPass.dispose();
+    this.cloudShadows.dispose();
+    this.weatherMap.dispose();
+    this.cloudNoise.dispose();
+    this.lightning.dispose();
+    this.envCloudDome.geometry.dispose();
+    (this.envCloudDome.material as THREE.Material).dispose();
     this.sky.removeFromParent();
     this.moonDisc.removeFromParent();
     this.stars.removeFromParent();
@@ -194,6 +352,59 @@ export class AtmosphereSystem {
     this.moonLight.removeFromParent();
     this.ambientLight.removeFromParent();
     this.scene.environment = null;
+  }
+
+  /**
+   * Per-pixel cloud shadow factor multiplied into the sun light's contribution
+   * (custom shadow node, no shadow map render pass involved).
+   */
+  private createSunShadowNode(): NodeRef {
+    const cloudShadows = this.cloudShadows;
+    return Fn(() => {
+      return cloudShadows.sampleShadow(positionWorld.xz);
+    })();
+  }
+
+  /**
+   * Cheap analytic cloud layer for the environment cubemap: projects the
+   * weather map coverage onto a dome so water reflections show the actual
+   * cloud pattern without raymarching all six cube faces.
+   */
+  private createEnvCloudDome(): THREE.Mesh {
+    const material = new THREE.NodeMaterial();
+    material.name = "env-cloud-dome";
+    material.side = THREE.BackSide;
+    material.transparent = true;
+    material.depthWrite = false;
+    (material as any).fog = false;
+
+    const weatherTex = texture(this.weatherMap.texture);
+    const uCamAbs = this.uEnvCloudCamAbs;
+    const uBase = this.uEnvCloudBase;
+    const uColor = this.uEnvCloudColor;
+    const uDensity = this.uEnvCloudDensity;
+    const uWeatherCenter = this.uEnvWeatherCenter;
+
+    material.fragmentNode = Fn(() => {
+      const dir: NodeRef = positionWorld.normalize().toVar();
+      const up = dir.y.max(0.02);
+      const dist = uBase.div(up);
+      const posAbs = dir.xz.mul(dist).add(uCamAbs);
+      const wuv = posAbs.sub(uWeatherCenter).div(WEATHER_DOMAIN_METERS).add(0.5);
+      const weather: NodeRef = weatherTex.sample(wuv);
+      const coverage = weather.x;
+      const horizonFade = smoothstep(float(0.015), float(0.12), dir.y);
+      const alpha: NodeRef = smoothstep(float(0.08), float(0.6), coverage)
+        .mul(uDensity.mul(0.75).add(0.25))
+        .mul(horizonFade)
+        .clamp(0, 0.96);
+      return vec4(uColor, alpha);
+    })();
+
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(24000, 32, 16), material);
+    dome.name = "Environment cloud dome";
+    dome.frustumCulled = false;
+    return dome;
   }
 
   /**
@@ -245,7 +456,9 @@ export class AtmosphereSystem {
       .lerp(new THREE.Color("#5d666b"), cloudShadow * 0.55)
       .lerp(new THREE.Color("#22272b"), storm * 0.55);
     const fogColor = horizon.clone().lerp(new THREE.Color("#8b9292"), weather.humidity * 0.18 + storm * 0.22);
-    const sunVisibility = daylight * (1 - cloudShadow * 0.86);
+    // The projected cloud shadow map now darkens the sun per-pixel, so the
+    // analytic global attenuation is softer than it used to be.
+    const sunVisibility = daylight * (1 - cloudShadow * 0.55);
     const moonVisibility = night * (1 - cloudShadow * 0.7);
     const starVisibility = night * (1 - weather.cloudCoverage) * (1 - weather.humidity * 0.35);
     const ambientIntensity = THREE.MathUtils.lerp(0.08, 0.92, daylight) * (1 - cloudShadow * 0.55) + night * 0.07;

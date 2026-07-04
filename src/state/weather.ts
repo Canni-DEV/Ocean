@@ -6,11 +6,14 @@ export const WEATHER_PRESETS: Record<WeatherPresetName, WeatherState> = {
     windSpeedMs: 7,
     swellDirectionRad: Math.PI * 0.1,
     swellStrength: 0.38,
-    cloudCoverage: 0.08,
-    cloudDensity: 0.18,
-    cloudBaseMeters: 2100,
-    cloudThicknessMeters: 620,
+    cloudCoverage: 0.16,
+    cloudDensity: 0.3,
+    cloudBaseMeters: 1900,
+    cloudThicknessMeters: 900,
     cloudDarkening: 0.08,
+    convectivity: 0.22,
+    cirrusAmount: 0.3,
+    lightningRate: 0,
     humidity: 0.42,
     precipitation: 0,
     visibilityKm: 38,
@@ -23,11 +26,14 @@ export const WEATHER_PRESETS: Record<WeatherPresetName, WeatherState> = {
     windSpeedMs: 13,
     swellDirectionRad: Math.PI * 0.38,
     swellStrength: 0.66,
-    cloudCoverage: 0.68,
+    cloudCoverage: 0.58,
     cloudDensity: 0.58,
-    cloudBaseMeters: 1100,
-    cloudThicknessMeters: 1200,
+    cloudBaseMeters: 1150,
+    cloudThicknessMeters: 1600,
     cloudDarkening: 0.38,
+    convectivity: 0.42,
+    cirrusAmount: 0.5,
+    lightningRate: 0,
     humidity: 0.78,
     precipitation: 0.08,
     visibilityKm: 18,
@@ -40,16 +46,39 @@ export const WEATHER_PRESETS: Record<WeatherPresetName, WeatherState> = {
     windSpeedMs: 21,
     swellDirectionRad: Math.PI * 0.58,
     swellStrength: 0.92,
-    cloudCoverage: 0.94,
-    cloudDensity: 0.88,
-    cloudBaseMeters: 520,
-    cloudThicknessMeters: 2100,
-    cloudDarkening: 0.84,
+    cloudCoverage: 0.84,
+    cloudDensity: 0.82,
+    cloudBaseMeters: 620,
+    cloudThicknessMeters: 2600,
+    cloudDarkening: 0.72,
+    convectivity: 0.6,
+    cirrusAmount: 0.2,
+    lightningRate: 0,
     humidity: 0.96,
-    precipitation: 0.86,
-    visibilityKm: 5.5,
+    precipitation: 0.75,
+    visibilityKm: 7,
     aerosolDensity: 0.55,
-    stormIntensity: 0.9,
+    stormIntensity: 0.7,
+    transitionProgress: 1
+  },
+  storm: {
+    windDirectionRad: Math.PI * 0.78,
+    windSpeedMs: 28,
+    swellDirectionRad: Math.PI * 0.72,
+    swellStrength: 1,
+    cloudCoverage: 0.96,
+    cloudDensity: 0.95,
+    cloudBaseMeters: 450,
+    cloudThicknessMeters: 5600,
+    cloudDarkening: 0.9,
+    convectivity: 1,
+    cirrusAmount: 0.08,
+    lightningRate: 14,
+    humidity: 0.99,
+    precipitation: 1,
+    visibilityKm: 3.5,
+    aerosolDensity: 0.68,
+    stormIntensity: 1,
     transitionProgress: 1
   }
 };
@@ -58,7 +87,8 @@ export const WEATHER_PRESETS: Record<WeatherPresetName, WeatherState> = {
 export const WEATHER_DEFAULT_BEAUFORT: Record<WeatherPresetName, number> = {
   clear: 3.5,
   cloudy: 5.5,
-  rain: 8
+  rain: 8,
+  storm: 9.5
 };
 
 export function cloneWeather(state: WeatherState): WeatherState {
@@ -82,6 +112,9 @@ export function lerpWeather(
     cloudBaseMeters: lerp(from.cloudBaseMeters, to.cloudBaseMeters, k),
     cloudThicknessMeters: lerp(from.cloudThicknessMeters, to.cloudThicknessMeters, k),
     cloudDarkening: lerp(from.cloudDarkening, to.cloudDarkening, k),
+    convectivity: lerp(from.convectivity, to.convectivity, k),
+    cirrusAmount: lerp(from.cirrusAmount, to.cirrusAmount, k),
+    lightningRate: lerp(from.lightningRate, to.lightningRate, k),
     humidity: lerp(from.humidity, to.humidity, k),
     precipitation: lerp(from.precipitation, to.precipitation, k),
     visibilityKm: lerp(from.visibilityKm, to.visibilityKm, k),
@@ -89,6 +122,12 @@ export function lerpWeather(
     stormIntensity: lerp(from.stormIntensity, to.stormIntensity, k),
     transitionProgress: k
   };
+}
+
+/** Smoothstep easing for weather transitions so changes ramp in and out gently. */
+export function easeWeatherProgress(linearProgress: number): number {
+  const t = Math.max(0, Math.min(1, linearProgress));
+  return t * t * (3 - 2 * t);
 }
 
 function lerp(a: number, b: number, t: number): number {

@@ -3,7 +3,7 @@ import { AtmosphereSystem } from "../atmosphere/AtmosphereSystem";
 import { OceanPhysicsSampler } from "../ocean/OceanPhysicsSampler";
 import { OceanRenderer } from "../ocean/OceanRenderer";
 import { OceanSimulation, OCEAN_QUALITY } from "../ocean/simulation/OceanSimulation";
-import { cloneWeather, lerpWeather, WEATHER_PRESETS } from "../state/weather";
+import { cloneWeather, easeWeatherProgress, lerpWeather, WEATHER_PRESETS } from "../state/weather";
 import { buildSeaState, lerpSeaState, type SeaStateParams } from "../state/seaState";
 import { FrameStats } from "./FrameStats";
 import { InputController } from "./InputController";
@@ -16,7 +16,6 @@ type EngineAppOptions = {
 };
 
 const FLOATING_ORIGIN_THRESHOLD_METERS = 5000;
-const WEATHER_TRANSITION_SECONDS = 8;
 const BASE_TONE_MAPPING_EXPOSURE = 0.38;
 
 export class EngineApp {
@@ -42,10 +41,11 @@ export class EngineApp {
   private weatherSource: WeatherState;
   private weatherTarget: WeatherState;
   private weatherCurrent: WeatherState;
-  private weatherTransitionSeconds = WEATHER_TRANSITION_SECONDS;
+  private weatherTransitionSeconds = Number.POSITIVE_INFINITY;
   private seaStateCurrent: SeaStateParams | null = null;
   private originOffsetMeters = { x: 0, z: 0 };
   private oceanComputeMs: number | null = null;
+  private cloudComputeMs: number | null = null;
   private simulationTimeSeconds = 0;
   private status: EngineMetrics["status"] = "booting";
   private error: string | null = null;
@@ -117,6 +117,8 @@ export class EngineApp {
       this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
       this.renderer.toneMappingExposure = BASE_TONE_MAPPING_EXPOSURE;
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+      // Required so the sun light's custom cloud-shadow node is evaluated
+      this.renderer.shadowMap.enabled = true;
       await this.renderer.init();
 
       this.atmosphere = new AtmosphereSystem(this.scene);
@@ -139,7 +141,11 @@ export class EngineApp {
   private createOcean(tier: QualityTier): void {
     this.activeQuality = tier;
     const simulation = new OceanSimulation(tier);
-    const ocean = new OceanRenderer({ scene: this.scene, simulation });
+    const ocean = new OceanRenderer({
+      scene: this.scene,
+      simulation,
+      cloudShadows: this.atmosphere?.cloudShadows ?? null
+    });
     ocean.applySettings(this.settings);
     this.simulation = simulation;
     this.ocean = ocean;
@@ -148,6 +154,7 @@ export class EngineApp {
 
     const quality = OCEAN_QUALITY[tier];
     this.atmosphere?.setEnvironmentQuality(quality.envMapSize, quality.envMapIntervalMs);
+    this.atmosphere?.setCloudQuality(tier);
   }
 
   private rebuildOcean(tier: QualityTier): void {
@@ -165,6 +172,8 @@ export class EngineApp {
     const height = this.canvas.clientHeight || window.innerHeight;
     this.renderer.setSize(width, height, false);
     this.input.resize(width, height);
+    const pixelRatio = this.renderer.getPixelRatio();
+    this.atmosphere?.resize(width * pixelRatio, height * pixelRatio);
   };
 
   private loop = (): void => {
@@ -192,8 +201,11 @@ export class EngineApp {
       camera: this.input.camera,
       deltaSeconds,
       weather: tunedWeather,
-      worldTimeHours: this.worldTimeHours
+      worldTimeHours: this.worldTimeHours,
+      originOffsetMeters: this.originOffsetMeters,
+      timeSeconds: this.simulationTimeSeconds
     });
+    this.cloudComputeMs = this.atmosphere.cloudComputeMs;
 
     this.renderer.toneMappingExposure = BASE_TONE_MAPPING_EXPOSURE * environment.exposure;
 
@@ -252,11 +264,9 @@ export class EngineApp {
   }
 
   private updateWeather(deltaSeconds: number): void {
-    this.weatherTransitionSeconds = Math.min(
-      WEATHER_TRANSITION_SECONDS,
-      this.weatherTransitionSeconds + deltaSeconds
-    );
-    const progress = this.weatherTransitionSeconds / WEATHER_TRANSITION_SECONDS;
+    const duration = Math.max(1, this.settings.weatherTransitionSeconds);
+    this.weatherTransitionSeconds = Math.min(duration, this.weatherTransitionSeconds + deltaSeconds);
+    const progress = easeWeatherProgress(this.weatherTransitionSeconds / duration);
     this.weatherCurrent = lerpWeather(this.weatherSource, this.weatherTarget, progress);
   }
 
@@ -298,6 +308,7 @@ export class EngineApp {
       cpuMs: this.stats.cpuMs,
       gpuMs: null,
       oceanComputeMs: this.oceanComputeMs,
+      cloudComputeMs: this.cloudComputeMs,
       seaLevelAtCameraM: seaLevel ?? null,
       worldTimeHours: this.worldTimeHours,
       camera: {

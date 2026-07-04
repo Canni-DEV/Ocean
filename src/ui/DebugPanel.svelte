@@ -15,7 +15,8 @@
   const weatherOptions: Array<{ value: WeatherPresetName; label: string }> = [
     { value: "clear", label: "Despejado" },
     { value: "cloudy", label: "Nuboso" },
-    { value: "rain", label: "Lluvia" }
+    { value: "rain", label: "Lluvia" },
+    { value: "storm", label: "Tormenta" }
   ];
 
   const qualityOptions: Array<{ value: QualityTier; label: string }> = [
@@ -70,6 +71,10 @@
     {
       label: "Ocean Upd",
       value: metrics.oceanComputeMs === null ? "n/a" : `${metrics.oceanComputeMs.toFixed(1)} ms`
+    },
+    {
+      label: "Clouds Upd",
+      value: metrics.cloudComputeMs === null ? "n/a" : `${metrics.cloudComputeMs.toFixed(1)} ms`
     },
     {
       label: "Sea Level",
@@ -162,6 +167,10 @@
       <span>World Hour {settings.worldTimeHours.toFixed(2)}</span>
       <input min="0" max="24" step="0.05" type="range" value={settings.worldTimeHours} oninput={(event) => patch({ worldTimeHours: numberValue(event) })} />
     </label>
+    <label class="col-span-2">
+      <span>Transición clima {settings.weatherTransitionSeconds.toFixed(0)} s</span>
+      <input min="5" max="120" step="1" type="range" value={settings.weatherTransitionSeconds} oninput={(event) => patch({ weatherTransitionSeconds: numberValue(event) })} />
+    </label>
   </section>
 
   <section class="mt-3 rounded border border-sky-400/25 bg-sky-950/30 p-2">
@@ -244,6 +253,10 @@
     <label class="flex min-h-8 items-center justify-between gap-2 rounded border border-white/10 bg-white/[0.045] px-2 py-1">
       <span>Rain</span>
       <input type="checkbox" checked={settings.showRain} onchange={(event) => patch({ showRain: checked(event) })} />
+    </label>
+    <label class="flex min-h-8 items-center justify-between gap-2 rounded border border-white/10 bg-white/[0.045] px-2 py-1">
+      <span>Clouds</span>
+      <input type="checkbox" checked={settings.showClouds} onchange={(event) => patch({ showClouds: checked(event) })} />
     </label>
     <label class="flex min-h-8 items-center justify-between gap-2 rounded border border-white/10 bg-white/[0.045] px-2 py-1">
       <span>Wireframe</span>

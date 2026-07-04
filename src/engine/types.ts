@@ -1,6 +1,6 @@
 export type QualityTier = "low" | "medium" | "high";
 
-export type WeatherPresetName = "clear" | "cloudy" | "rain";
+export type WeatherPresetName = "clear" | "cloudy" | "rain" | "storm";
 
 export type DebugRenderMode =
   | "final"
@@ -23,6 +23,12 @@ export type WeatherState = {
   cloudBaseMeters: number;
   cloudThicknessMeters: number;
   cloudDarkening: number;
+  /** 0 = flat stratus layer, 1 = tall convective cumulonimbus towers. */
+  convectivity: number;
+  /** 0-1 amount of high-altitude cirrus haze. */
+  cirrusAmount: number;
+  /** Average lightning strikes per minute at full storm intensity. */
+  lightningRate: number;
   humidity: number;
   precipitation: number;
   visibilityKm: number;
@@ -73,6 +79,7 @@ export type EngineMetrics = {
   cpuMs: number;
   gpuMs: number | null;
   oceanComputeMs: number | null;
+  cloudComputeMs: number | null;
   seaLevelAtCameraM: number | null;
   worldTimeHours: number;
   camera: CameraDebugState;
@@ -94,6 +101,9 @@ export type DebugSettings = {
   oceanDisplacement: boolean;
   showFoam: boolean;
   showRain: boolean;
+  showClouds: boolean;
+  /** Weather preset transition duration in seconds. */
+  weatherTransitionSeconds: number;
   wireframe: boolean;
   paused: boolean;
   /** Advanced physical spectrum parameters. */
