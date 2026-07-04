@@ -64,6 +64,7 @@ export type CloudWeatherInput = {
   cloudThicknessMeters: number;
   cloudDensity: number;
   cloudDarkening: number;
+  cloudCoverage: number;
   cirrusAmount: number;
   windDirectionRad: number;
 };
@@ -114,8 +115,8 @@ export class VolumetricCloudPass {
   private readonly uCloudThickness: AnyUniform<number> = uniform(1500) as any;
   private readonly uDensityMult: AnyUniform<number> = uniform(0.6) as any;
   private readonly uDarkening: AnyUniform<number> = uniform(0.2) as any;
+  private readonly uGlobalCoverage: AnyUniform<number> = uniform(0.5) as any;
   private readonly uCirrus: AnyUniform<number> = uniform(0.3) as any;
-  private readonly uWeatherCenter: AnyUniform<THREE.Vector2> = uniform(new THREE.Vector2()) as any;
   private readonly uWindOffset: AnyUniform<THREE.Vector2> = uniform(new THREE.Vector2()) as any;
   private readonly uWindDir: AnyUniform<THREE.Vector2> = uniform(new THREE.Vector2(1, 0)) as any;
 
@@ -177,6 +178,7 @@ export class VolumetricCloudPass {
     this.uCloudThickness.value = Math.max(200, weather.cloudThicknessMeters);
     this.uDensityMult.value = weather.cloudDensity;
     this.uDarkening.value = weather.cloudDarkening;
+    this.uGlobalCoverage.value = weather.cloudCoverage;
     this.uCirrus.value = weather.cirrusAmount;
     this.uWindDir.value.set(Math.cos(weather.windDirectionRad), Math.sin(weather.windDirectionRad));
   }
@@ -217,15 +219,12 @@ export class VolumetricCloudPass {
     this.uCamAbsXZ.value.set(camera.position.x + originOffset.x, camera.position.z + originOffset.z);
     this.uInvProj.value.copy(camera.projectionMatrixInverse);
     this.uCamWorld.value.copy(camera.matrixWorld);
-    this.uWeatherCenter.value.copy(weatherMap.domainCenterAbs);
     this.uWindOffset.value.copy(weatherMap.windOffsetMeters);
     this.uFrame.value = this.frameIndex % 1024;
 
-    // Direction-only reprojection: rotation is exact, translation parallax is
-    // absorbed by the exponential blend. Drop history harder on fast movement.
     const cameraDelta = this.prevCameraPos.distanceTo(camera.position);
-    const movementFade = THREE.MathUtils.clamp(1 - cameraDelta / 60, 0, 1);
-    this.uHistoryBlend.value = this.historyValid ? 0.9 * movementFade : 0;
+    const movementFade = THREE.MathUtils.clamp(1 - cameraDelta / 180, 0.25, 1);
+    this.uHistoryBlend.value = this.historyValid ? 0.93 * movementFade : 0;
     this.uPrevProjView.value.copy(this.prevProjView);
 
     const readTarget = this.targets[1 - this.writeIndex];
@@ -322,8 +321,8 @@ export class VolumetricCloudPass {
     const uCloudThickness = this.uCloudThickness;
     const uDensityMult = this.uDensityMult;
     const uDarkening = this.uDarkening;
+    const uGlobalCoverage = this.uGlobalCoverage;
     const uCirrus = this.uCirrus;
-    const uWeatherCenter = this.uWeatherCenter;
     const uWindOffset = this.uWindOffset;
     const uWindDir = this.uWindDir;
     const uKeyLightDir = this.uKeyLightDir;
@@ -343,9 +342,9 @@ export class VolumetricCloudPass {
     const MARCH_STEPS = quality.marchSteps;
     const LIGHT_STEPS = quality.lightSteps;
 
-    /** Weather field sample at an absolute world XZ position (R cov, G type, B precip). */
+    /** Tiled weather sample — wind advection is smooth via the offset uniform. */
     const sampleWeather = (posAbsXZ: NodeRef): NodeRef => {
-      const wuv = posAbsXZ.sub(uWeatherCenter).div(WEATHER_DOMAIN_METERS).add(0.5);
+      const wuv = fract(posAbsXZ.sub(uWindOffset).div(WEATHER_DOMAIN_METERS));
       return weatherTex.sample(wuv).level(float(0));
     };
 
@@ -361,12 +360,12 @@ export class VolumetricCloudPass {
     ): NodeRef => {
       const posAbsXZ = posLocalXZ.add(uCamAbsXZ);
       const weather = sampleWeather(posAbsXZ).toVar();
-      const coverage = weather.x;
+      const coverage = weather.x.mul(uGlobalCoverage).clamp(0, 1);
       const cloudType = weather.y;
 
       const hNorm = altitude.sub(uCloudBase).div(uCloudThickness).clamp(0, 1);
-      // Effective layer height by type: stratus stay flat, cumulonimbus fill the slab
-      const layerHeight = mix(float(0.28), float(1.0), cloudType);
+      // Effective layer height by type: stratus fill more of the slab at horizon
+      const layerHeight = mix(float(0.55), float(1.0), cloudType);
       const hRel = hNorm.div(layerHeight).clamp(0, 1.35);
 
       // Vertical profile: rounded base, type-dependent top; anvil spread near cb tops
@@ -476,13 +475,6 @@ export class VolumetricCloudPass {
         const tOcean = camAltitude.div(worldDir.y.negate());
         end.assign(end.min(tOcean));
       });
-
-      // Distance budget: cap the marched span for grazing horizon rays
-      const maxSpan = uCloudThickness.mul(4).add(9000).min(26000);
-      end.assign(end.min(start.add(maxSpan)).min(70000));
-
-      // Grazing rays enter the shell tens of km away; fade them into the haze
-      const horizonFade = float(1).sub(smoothstep(float(28000), float(58000), start));
 
       const radiance = vec3(0).toVar();
       const transmittance = float(1).toVar();
@@ -636,9 +628,12 @@ export class VolumetricCloudPass {
       const fogAmount: NodeRef = float(1).sub(exp(start.max(0).mul(uFogDensity.mul(-0.55))));
       radiance.assign(mix(radiance, uFogColor.mul(float(1).sub(transmittance)).mul(0.85), fogAmount));
 
-      // Blend fully into the sky at extreme horizon distances
-      radiance.mulAssign(horizonFade);
-      transmittance.assign(mix(float(1), transmittance, horizonFade));
+      // Horizon fill: low elevation rays get stratus haze so the sky seam is hidden
+      const horizonWeight: NodeRef = float(1).sub(smoothstep(float(0.004), float(0.16), worldDir.y));
+      const horizonFill: NodeRef = uGlobalCoverage.mul(horizonWeight).clamp(0, 1);
+      const horizonColor = mix(uAmbientBottom, uFogColor, float(0.55));
+      radiance.addAssign(horizonColor.mul(horizonFill).mul(0.65).mul(transmittance));
+      transmittance.mulAssign(float(1).sub(horizonFill.mul(0.88)));
 
       const current = vec4(radiance, transmittance);
 

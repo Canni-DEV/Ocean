@@ -1,6 +1,6 @@
 import * as THREE from "three/webgpu";
 import { SkyMesh } from "three/addons/objects/SkyMesh.js";
-import { Fn, float, positionWorld, smoothstep, texture, uniform, vec4 } from "three/tsl";
+import { Fn, float, fract, positionWorld, smoothstep, texture, uniform, vec4 } from "three/tsl";
 import type { DebugSettings, EnvironmentState, QualityTier, WeatherState } from "../engine/types";
 import { CloudNoiseTextures } from "./clouds/CloudNoiseTextures";
 import { WeatherMap, WEATHER_DOMAIN_METERS } from "./clouds/WeatherMap";
@@ -65,7 +65,7 @@ export class AtmosphereSystem {
   private readonly uEnvCloudBase: AnyUniform<number> = uniform(1200) as any;
   private readonly uEnvCloudColor: AnyUniform<THREE.Color> = uniform(new THREE.Color()) as any;
   private readonly uEnvCloudDensity: AnyUniform<number> = uniform(0.5) as any;
-  private readonly uEnvWeatherCenter: AnyUniform<THREE.Vector2> = uniform(new THREE.Vector2()) as any;
+  private readonly uEnvWindOffset: AnyUniform<THREE.Vector2> = uniform(new THREE.Vector2()) as any;
 
   private cubeRenderTarget: THREE.CubeRenderTarget | null = null;
   private cubeCamera: THREE.CubeCamera | null = null;
@@ -234,8 +234,6 @@ export class AtmosphereSystem {
     this.weatherMap.update(
       options.renderer,
       cloudWeather,
-      cameraAbsX,
-      cameraAbsZ,
       options.deltaSeconds,
       options.timeSeconds
     );
@@ -266,6 +264,7 @@ export class AtmosphereSystem {
         cloudThicknessMeters: weather.cloudThicknessMeters,
         cloudDensity: weather.cloudDensity,
         cloudDarkening: weather.cloudDarkening,
+        cloudCoverage: weather.cloudCoverage,
         cirrusAmount: weather.cirrusAmount,
         windDirectionRad: weather.windDirectionRad
       });
@@ -309,7 +308,7 @@ export class AtmosphereSystem {
 
     // Environment cubemap cloud dome (cheap clouds for water reflections)
     this.envCloudDome.visible = cloudsEnabled && weather.cloudCoverage > 0.02;
-    this.uEnvWeatherCenter.value.copy(this.weatherMap.domainCenterAbs);
+    this.uEnvWindOffset.value.copy(this.weatherMap.windOffsetMeters);
     this.uEnvCloudCamAbs.value.set(cameraAbsX, cameraAbsZ);
     this.uEnvCloudBase.value = weather.cloudBaseMeters;
     this.uEnvCloudDensity.value = weather.cloudDensity * (0.5 + weather.cloudDarkening * 0.5);
@@ -383,14 +382,14 @@ export class AtmosphereSystem {
     const uBase = this.uEnvCloudBase;
     const uColor = this.uEnvCloudColor;
     const uDensity = this.uEnvCloudDensity;
-    const uWeatherCenter = this.uEnvWeatherCenter;
+    const uWindOffset = this.uEnvWindOffset;
 
     material.fragmentNode = Fn(() => {
       const dir: NodeRef = positionWorld.normalize().toVar();
       const up = dir.y.max(0.02);
       const dist = uBase.div(up);
       const posAbs = dir.xz.mul(dist).add(uCamAbs);
-      const wuv = posAbs.sub(uWeatherCenter).div(WEATHER_DOMAIN_METERS).add(0.5);
+      const wuv = fract(posAbs.sub(uWindOffset).div(WEATHER_DOMAIN_METERS));
       const weather: NodeRef = weatherTex.sample(wuv);
       const coverage = weather.x;
       const horizonFade = smoothstep(float(0.015), float(0.12), dir.y);
