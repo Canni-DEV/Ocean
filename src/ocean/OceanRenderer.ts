@@ -1,86 +1,149 @@
 import * as THREE from "three/webgpu";
-import { MeshStandardNodeMaterial } from "three/webgpu";
+import { MeshPhysicalNodeMaterial } from "three/webgpu";
 import {
+  Fn,
   cameraPosition,
   color,
   float,
   mix,
   mx_noise_float,
-  positionLocal,
+  output,
+  positionGeometry,
   positionWorld,
   smoothstep,
+  texture,
+  transformNormalToView,
   uniform,
-  vec3
+  vec2,
+  vec3,
+  vec4,
+  vertexStage
 } from "three/tsl";
 import type { DebugRenderMode, DebugSettings, EnvironmentState, WeatherState } from "../engine/types";
-import { WaveField, type WaveComponent } from "./WaveField";
+import type { OceanSimulation } from "./simulation/OceanSimulation";
+
+type NodeRef = any;
 
 type OceanRendererOptions = {
   scene: THREE.Scene;
-  waveField: WaveField;
+  simulation: OceanSimulation;
 };
 
 type AnyUniform<T> = any & { value: T };
 
 type OceanUniformNodes = {
-  origin: AnyUniform<THREE.Vector2>;
-  time: AnyUniform<number>;
-  windDirection: AnyUniform<number>;
-  swellDirection: AnyUniform<number>;
-  windSpeed: AnyUniform<number>;
-  swellStrength: AnyUniform<number>;
-  storm: AnyUniform<number>;
-  waveScale: AnyUniform<number>;
-  roughnessBias: AnyUniform<number>;
+  worldOffset: AnyUniform<THREE.Vector2>;
+  displacementToggle: AnyUniform<number>;
   foamIntensity: AnyUniform<number>;
-  exposure: AnyUniform<number>;
-  cloudShadow: AnyUniform<number>;
-  waterAbsorption: AnyUniform<THREE.Color>;
-  reflectionColor: AnyUniform<THREE.Color>;
-  sunColor: AnyUniform<THREE.Color>;
-  moonColor: AnyUniform<THREE.Color>;
+  precipitation: AnyUniform<number>;
+  turbidity: AnyUniform<number>;
+  time: AnyUniform<number>;
+  absorptionColor: AnyUniform<THREE.Color>;
+  scatterColor: AnyUniform<THREE.Color>;
   sunDirection: AnyUniform<THREE.Vector3>;
-  moonDirection: AnyUniform<THREE.Vector3>;
+  sunColor: AnyUniform<THREE.Color>;
   sunVisibility: AnyUniform<number>;
-  moonVisibility: AnyUniform<number>;
   debugHeight: AnyUniform<number>;
   debugNormal: AnyUniform<number>;
   debugFoam: AnyUniform<number>;
-  debugBreaking: AnyUniform<number>;
-  debugCurvature: AnyUniform<number>;
-  debugDetailNormal: AnyUniform<number>;
-  debugRoughness: AnyUniform<number>;
-  debugFresnel: AnyUniform<number>;
+  debugJacobian: AnyUniform<number>;
   debugSlope: AnyUniform<number>;
+  debugCascades: AnyUniform<number>;
+  debugFresnel: AnyUniform<number>;
 };
 
-const GRAVITY_MS2 = 9.81;
+const MAX_RADIUS_METERS = 30000;
 
 function u<T>(value: T): AnyUniform<T> {
   return uniform(value as never) as unknown as AnyUniform<T>;
 }
 
+/**
+ * Builds a camera-centered radial grid: exponentially growing rings so vertex
+ * density is high near the camera and low at the horizon.
+ */
+function buildRadialGrid(rings: number, sectors: number, innerRadius: number): THREE.BufferGeometry {
+  const vertexCount = 1 + rings * sectors;
+  const positions = new Float32Array(vertexCount * 3);
+  const growth = Math.pow(MAX_RADIUS_METERS / innerRadius, 1 / (rings - 1));
+
+  let offset = 3; // vertex 0 is the center
+  for (let ring = 0; ring < rings; ring += 1) {
+    const radius = innerRadius * Math.pow(growth, ring);
+    for (let sector = 0; sector < sectors; sector += 1) {
+      const angle = (sector / sectors) * Math.PI * 2;
+      positions[offset] = Math.cos(angle) * radius;
+      positions[offset + 1] = 0;
+      positions[offset + 2] = Math.sin(angle) * radius;
+      offset += 3;
+    }
+  }
+
+  const triangleCount = sectors + (rings - 1) * sectors * 2;
+  const indices = new Uint32Array(triangleCount * 3);
+  let cursor = 0;
+
+  const ringVertex = (ring: number, sector: number): number => 1 + ring * sectors + (sector % sectors);
+
+  // Winding is counter-clockwise seen from above (+Y) so faces point up.
+  for (let sector = 0; sector < sectors; sector += 1) {
+    indices[cursor] = 0;
+    indices[cursor + 1] = ringVertex(0, sector + 1);
+    indices[cursor + 2] = ringVertex(0, sector);
+    cursor += 3;
+  }
+
+  for (let ring = 0; ring < rings - 1; ring += 1) {
+    for (let sector = 0; sector < sectors; sector += 1) {
+      const a = ringVertex(ring, sector);
+      const b = ringVertex(ring, sector + 1);
+      const c = ringVertex(ring + 1, sector);
+      const d = ringVertex(ring + 1, sector + 1);
+      indices[cursor] = a;
+      indices[cursor + 1] = b;
+      indices[cursor + 2] = c;
+      indices[cursor + 3] = b;
+      indices[cursor + 4] = d;
+      indices[cursor + 5] = c;
+      cursor += 6;
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+/**
+ * FFT-driven ocean surface with physically based shading: displacement and
+ * derivative maps come from the spectral simulation, lighting uses the scene
+ * environment (dynamic sky cubemap) plus GGX sun specular and approximate
+ * subsurface scattering on wave crests.
+ */
 export class OceanRenderer {
-  private readonly waveField: WaveField;
+  private readonly simulation: OceanSimulation;
   private readonly mesh: THREE.Mesh;
   private readonly geometry: THREE.BufferGeometry;
-  private readonly material: MeshStandardNodeMaterial;
+  private readonly material: MeshPhysicalNodeMaterial;
   private readonly uniforms: OceanUniformNodes;
+  private readonly derivativeNodes: NodeRef[];
   private visible = true;
-  private readonly sizeMeters = 3600;
-  private readonly snapMeters = 8;
 
   constructor(options: OceanRendererOptions) {
-    this.waveField = options.waveField;
-    this.geometry = new THREE.PlaneGeometry(this.sizeMeters, this.sizeMeters, 420, 420);
-    this.geometry.rotateX(-Math.PI / 2);
-    this.geometry.computeBoundingSphere();
+    this.simulation = options.simulation;
 
-    const shader = createWaterMaterial(this.waveField.getComponents());
+    const quality = this.simulation.quality;
+    this.geometry = buildRadialGrid(quality.meshRings, quality.meshSectors, quality.meshInnerRadius);
+
+    const shader = createWaterMaterial(this.simulation);
     this.material = shader.material;
     this.uniforms = shader.uniforms;
+    this.derivativeNodes = shader.derivativeNodes;
+
     this.mesh = new THREE.Mesh(this.geometry, this.material);
-    this.mesh.name = "GPU displaced physical ocean";
+    this.mesh.name = "FFT spectral ocean surface";
     this.mesh.frustumCulled = false;
     options.scene.add(this.mesh);
   }
@@ -97,21 +160,32 @@ export class OceanRenderer {
     weather: WeatherState,
     environment: EnvironmentState,
     settings: DebugSettings,
+    originOffset: { x: number; z: number },
     timeSeconds: number
-  ): number {
-    const start = performance.now();
-    const x = Math.round(camera.position.x / this.snapMeters) * this.snapMeters;
-    const z = Math.round(camera.position.z / this.snapMeters) * this.snapMeters;
-    this.mesh.position.set(x, 0, z);
+  ): void {
+    this.mesh.position.set(camera.position.x, 0, camera.position.z);
     this.mesh.visible = this.visible;
-    this.waveField.update(weather, settings);
-    this.waveField.setOrigin(x, z);
-    this.updateUniforms(weather, environment, settings, timeSeconds, x, z);
-    return performance.now() - start;
-  }
 
-  sample(x: number, z: number, timeSeconds: number) {
-    return this.waveField.sample(x, z, timeSeconds);
+    // Ping-pong: point the material at the derivative maps written this frame.
+    this.simulation.cascades.forEach((cascade, index) => {
+      this.derivativeNodes[index].value = cascade.currentDerivativeTexture;
+    });
+
+    this.uniforms.worldOffset.value.set(camera.position.x + originOffset.x, camera.position.z + originOffset.z);
+    this.uniforms.displacementToggle.value = settings.oceanDisplacement ? 1 : 0;
+    this.uniforms.foamIntensity.value = settings.showFoam ? settings.foamIntensity : 0;
+    this.uniforms.precipitation.value = weather.precipitation;
+    this.uniforms.turbidity.value = settings.waterTurbidity;
+    this.uniforms.time.value = timeSeconds;
+    this.uniforms.absorptionColor.value.set(environment.waterAbsorptionColor);
+    this.uniforms.scatterColor.value.set(environment.waterScatterColor);
+    this.uniforms.sunColor.value.set(environment.sunColor);
+    this.uniforms.sunVisibility.value = environment.celestial.sunVisibility;
+    this.uniforms.sunDirection.value.set(
+      environment.celestial.sunDirection.x,
+      environment.celestial.sunDirection.y,
+      environment.celestial.sunDirection.z
+    );
   }
 
   dispose(): void {
@@ -120,221 +194,175 @@ export class OceanRenderer {
     this.mesh.removeFromParent();
   }
 
-  private updateUniforms(
-    weather: WeatherState,
-    environment: EnvironmentState,
-    settings: DebugSettings,
-    timeSeconds: number,
-    originX: number,
-    originZ: number
-  ): void {
-    const roughness = THREE.MathUtils.clamp(
-      0.18 + weather.precipitation * 0.38 + weather.stormIntensity * 0.3 + settings.waterRoughnessBias,
-      0.08,
-      0.92
-    );
-
-    this.uniforms.origin.value.set(originX, originZ);
-    this.uniforms.time.value = timeSeconds;
-    this.uniforms.windDirection.value = weather.windDirectionRad;
-    this.uniforms.swellDirection.value = weather.swellDirectionRad;
-    this.uniforms.windSpeed.value = weather.windSpeedMs;
-    this.uniforms.swellStrength.value = weather.swellStrength;
-    this.uniforms.storm.value = weather.stormIntensity;
-    this.uniforms.waveScale.value = settings.oceanDisplacement ? settings.waveScale : 0;
-    this.uniforms.roughnessBias.value = roughness;
-    this.uniforms.foamIntensity.value = settings.showFoam ? settings.foamIntensity : 0;
-    this.uniforms.exposure.value = environment.exposure;
-    this.uniforms.cloudShadow.value = environment.cloudShadow;
-    this.uniforms.waterAbsorption.value.set(environment.waterAbsorptionColor);
-    this.uniforms.reflectionColor.value.set(environment.reflectionColor);
-    this.uniforms.sunColor.value.set(environment.sunColor);
-    this.uniforms.moonColor.value.set(environment.moonColor);
-    this.uniforms.sunDirection.value.set(
-      environment.celestial.sunDirection.x,
-      environment.celestial.sunDirection.y,
-      environment.celestial.sunDirection.z
-    );
-    this.uniforms.moonDirection.value.set(
-      environment.celestial.moonDirection.x,
-      environment.celestial.moonDirection.y,
-      environment.celestial.moonDirection.z
-    );
-    this.uniforms.sunVisibility.value = environment.celestial.sunVisibility;
-    this.uniforms.moonVisibility.value = environment.celestial.moonVisibility;
-    this.setDebugMode(settings.renderMode);
-  }
-
   private setDebugMode(mode: DebugRenderMode): void {
-    this.uniforms.debugHeight.value = mode === "ocean-height" ? 1 : 0;
-    this.uniforms.debugNormal.value = mode === "ocean-normal" ? 1 : 0;
+    this.uniforms.debugHeight.value = mode === "height" ? 1 : 0;
+    this.uniforms.debugNormal.value = mode === "normal" ? 1 : 0;
     this.uniforms.debugFoam.value = mode === "foam" ? 1 : 0;
-    this.uniforms.debugBreaking.value = mode === "breaking" ? 1 : 0;
-    this.uniforms.debugCurvature.value = mode === "curvature" ? 1 : 0;
-    this.uniforms.debugDetailNormal.value = mode === "detail-normal" ? 1 : 0;
-    this.uniforms.debugRoughness.value = mode === "roughness" ? 1 : 0;
+    this.uniforms.debugJacobian.value = mode === "jacobian" ? 1 : 0;
+    this.uniforms.debugSlope.value = mode === "slope" ? 1 : 0;
+    this.uniforms.debugCascades.value = mode === "cascades" ? 1 : 0;
     this.uniforms.debugFresnel.value = mode === "fresnel" ? 1 : 0;
-    this.uniforms.debugSlope.value = mode === "wave-slope" || mode === "weather" ? 1 : 0;
   }
 }
 
-function createWaterMaterial(waves: readonly WaveComponent[]): {
-  material: MeshStandardNodeMaterial;
+/** Per-cascade fade distances, proportional to patch size. */
+function cascadeFades(patchSize: number): { dispEnd: number; normalEnd: number } {
+  return {
+    dispEnd: patchSize * 9,
+    normalEnd: patchSize * 42
+  };
+}
+
+function createWaterMaterial(simulation: OceanSimulation): {
+  material: MeshPhysicalNodeMaterial;
   uniforms: OceanUniformNodes;
+  derivativeNodes: NodeRef[];
 } {
   const uniforms: OceanUniformNodes = {
-    origin: u(new THREE.Vector2()),
-    time: u(0),
-    windDirection: u(0),
-    swellDirection: u(0),
-    windSpeed: u(0),
-    swellStrength: u(0),
-    storm: u(0),
-    waveScale: u(1),
-    roughnessBias: u(0.4),
+    worldOffset: u(new THREE.Vector2()),
+    displacementToggle: u(1),
     foamIntensity: u(1),
-    exposure: u(1),
-    cloudShadow: u(0),
-    waterAbsorption: u(new THREE.Color("#07516a")),
-    reflectionColor: u(new THREE.Color("#8abbd8")),
-    sunColor: u(new THREE.Color("#fff1c2")),
-    moonColor: u(new THREE.Color("#b8caff")),
+    precipitation: u(0),
+    turbidity: u(0.25),
+    time: u(0),
+    absorptionColor: u(new THREE.Color("#03181f")),
+    scatterColor: u(new THREE.Color("#0e5e52")),
     sunDirection: u(new THREE.Vector3(0, 1, 0)),
-    moonDirection: u(new THREE.Vector3(0, 1, 0)),
+    sunColor: u(new THREE.Color("#fff1c2")),
     sunVisibility: u(1),
-    moonVisibility: u(0),
     debugHeight: u(0),
     debugNormal: u(0),
     debugFoam: u(0),
-    debugBreaking: u(0),
-    debugCurvature: u(0),
-    debugDetailNormal: u(0),
-    debugRoughness: u(0),
-    debugFresnel: u(0),
-    debugSlope: u(0)
+    debugJacobian: u(0),
+    debugSlope: u(0),
+    debugCascades: u(0),
+    debugFresnel: u(0)
   };
 
-  const material = new MeshStandardNodeMaterial();
+  const cascades = simulation.cascades;
+  const displacementNodes = cascades.map((cascade) => texture(cascade.displacementTexture));
+  const derivativeNodes = cascades.map((cascade) => texture(cascade.derivativeTextures[0]));
+
+  const material = new MeshPhysicalNodeMaterial();
   material.metalness = 0;
+  material.ior = 1.333;
+  material.envMapIntensity = 1;
 
-  const water = waterNodes(waves, uniforms);
-  material.positionNode = positionLocal.add(vec3(water.chopX, water.height, water.chopZ));
-  material.normalNode = water.surfaceNormal;
-  material.colorNode = water.color;
-  material.roughnessNode = water.roughness;
+  // ------------------------------------------------------------------ vertex
+  const sampleXZ = positionGeometry.xz.add(uniforms.worldOffset);
+  const cameraDistance = positionGeometry.xz.length();
 
-  return { material, uniforms };
-}
+  let displacement: NodeRef = vec3(0, 0, 0);
+  cascades.forEach((cascade, index) => {
+    const fades = cascadeFades(cascade.config.patchSize);
+    const uv = sampleXZ.div(cascade.config.patchSize);
+    const fade = float(1).sub(smoothstep(float(fades.dispEnd * 0.55), float(fades.dispEnd), cameraDistance));
+    const sampleNode = (displacementNodes[index] as any).sample(uv).level(float(0));
+    displacement = displacement.add(sampleNode.xyz.mul(fade));
+  });
+  displacement = displacement.mul(uniforms.displacementToggle);
 
-function waterNodes(waves: readonly WaveComponent[], uniforms: OceanUniformNodes) {
-  const origin = uniforms.origin as any;
-  const worldX = positionLocal.x.add(origin.x);
-  const worldZ = positionLocal.z.add(origin.y);
-  let height: any = float(0);
-  let slopeX: any = float(0);
-  let slopeZ: any = float(0);
-  let chopX: any = float(0);
-  let chopZ: any = float(0);
-  let curvature: any = float(0);
-  let crestCompression: any = float(0);
+  material.positionNode = positionGeometry.add(displacement);
 
-  waves.forEach((wave, index) => {
-    const baseDirection = float(wave.directionRad);
-    const direction =
-      index < 2
-        ? uniforms.swellDirection.add(baseDirection)
-        : mix(uniforms.windDirection, uniforms.swellDirection, float(0.35)).add(baseDirection);
-    const dirX = direction.cos();
-    const dirZ = direction.sin();
-    const k = float((Math.PI * 2) / wave.wavelengthMeters);
-    const omega = float(Math.sqrt(GRAVITY_MS2 * ((Math.PI * 2) / wave.wavelengthMeters)));
-    const windSpeedFactor = mix(float(0.9), float(1.18), uniforms.windSpeed.mul(0.036).clamp());
-    const phase = worldX.mul(dirX).add(worldZ.mul(dirZ)).mul(k).sub(uniforms.time.mul(omega).mul(windSpeedFactor));
-    const s = phase.sin();
-    const c = phase.cos();
-    const windAmp = mix(float(0.86), float(1.42), uniforms.windSpeed.mul(0.035).clamp());
-    const weatherAmp = uniforms.waveScale
-      .mul(mix(float(0.72), float(2.18), uniforms.swellStrength))
-      .mul(mix(float(0.78), float(1.82), uniforms.storm))
-      .mul(windAmp);
-    const amplitude = float(wave.amplitudeMeters).mul(weatherAmp);
-    const h = s.mul(amplitude);
+  const vHeight: NodeRef = vertexStage(displacement.y);
+  const vSampleXZ: NodeRef = vertexStage(sampleXZ);
+  const vDistance: NodeRef = vertexStage(cameraDistance);
 
-    height = height.add(h);
-    slopeX = slopeX.add(c.mul(amplitude).mul(k).mul(dirX));
-    slopeZ = slopeZ.add(c.mul(amplitude).mul(k).mul(dirZ));
-    chopX = chopX.add(c.mul(amplitude).mul(float(wave.steepness * 0.34)).mul(dirX));
-    chopZ = chopZ.add(c.mul(amplitude).mul(float(wave.steepness * 0.34)).mul(dirZ));
+  // ---------------------------------------------------------------- fragment
+  let slope: NodeRef = vec2(0, 0);
+  let foamRaw: NodeRef = float(0);
+  let jacobianMin: NodeRef = float(1);
+  let roughnessBoost: NodeRef = float(0);
+  let cascadeDebug: NodeRef = vec3(0, 0, 0);
 
-    const crestGate = smoothstep(float(0.72), float(0.97), s);
-    const localCurvature = s.max(0).mul(amplitude).mul(k).mul(k).mul(42).clamp();
-    const localCompression = amplitude.mul(k).mul(float(wave.steepness)).mul(crestGate).mul(3.4).clamp();
-    curvature = curvature.max(localCurvature);
-    crestCompression = crestCompression.max(localCompression);
+  cascades.forEach((cascade, index) => {
+    const fades = cascadeFades(cascade.config.patchSize);
+    const uv = vSampleXZ.div(cascade.config.patchSize);
+    const derivatives = (derivativeNodes[index] as any).sample(uv);
+    const fade = float(1).sub(smoothstep(float(fades.normalEnd * 0.4), float(fades.normalEnd), vDistance));
+
+    slope = slope.add(derivatives.xy.mul(fade));
+    foamRaw = foamRaw.max(derivatives.w.mul(fade.mul(0.4).add(0.6)));
+    jacobianMin = jacobianMin.min(derivatives.z.mul(fade).add(float(1).sub(fade)));
+    // Detail lost at distance becomes micro-roughness (specular anti-aliasing)
+    roughnessBoost = roughnessBoost.add(float(1).sub(fade).mul(index === 0 ? 0.02 : index === 1 ? 0.05 : 0.08));
+
+    const channel = [vec3(1, 0, 0), vec3(0, 1, 0), vec3(0, 0, 1)][index] as NodeRef;
+    cascadeDebug = cascadeDebug.add(channel.mul(derivatives.xy.length().mul(fade)));
   });
 
-  const detailUv = positionWorld.xz.add(uniforms.time.mul(1.6));
-  const windNoise = mx_noise_float(detailUv.mul(0.018));
-  const crossNoise = mx_noise_float(positionWorld.xz.sub(uniforms.time.mul(0.9)).mul(0.052));
-  const crestDetail = smoothstep(float(0.22), float(0.86), crestCompression.add(curvature.mul(0.6)));
-  const weatherDetail = mix(float(0.045), float(0.28), uniforms.storm).mul(uniforms.waveScale);
-  height = height.add(windNoise.mul(weatherDetail).mul(crestDetail.mul(0.7).add(0.3))).add(crossNoise.mul(weatherDetail.mul(0.38)));
-  const slope = slopeX.mul(slopeX).add(slopeZ.mul(slopeZ)).sqrt().mul(3.4).clamp();
-  const rippleA: any = mx_noise_float(detailUv.mul(0.11)).mul(0.5).add(0.5);
-  const rippleB: any = mx_noise_float(positionWorld.zx.add(uniforms.time.mul(2.35)).mul(0.31)).mul(0.5).add(0.5);
-  const detailStrength = mix(float(0.07), float(0.18), uniforms.storm).mul(uniforms.waveScale.sqrt()).mul(crestDetail.mul(0.75).add(0.55));
-  const fineNormalX: any = rippleA.sub(0.5).mul(detailStrength);
-  const fineNormalZ: any = rippleB.sub(0.5).mul(detailStrength);
-  const detailNormal = vec3(fineNormalX.negate().mul(3.2), float(1), fineNormalZ.negate().mul(3.2)).normalize();
-  const surfaceNormal = vec3(slopeX.add(fineNormalX).negate().mul(0.72), float(1), slopeZ.add(fineNormalZ).negate().mul(0.72)).normalize();
-  const roughness = uniforms.roughnessBias.add(crestDetail.mul(0.08)).clamp(0.08, 0.95);
+  // Rain ripples: fast animated high-frequency normal perturbation
+  const rippleStrength = uniforms.precipitation.mul(0.16);
+  const rippleA = mx_noise_float(vSampleXZ.mul(1.35).add(vec2(uniforms.time.mul(9.3), uniforms.time.mul(-7.1))));
+  const rippleB = mx_noise_float(vSampleXZ.mul(1.62).sub(vec2(uniforms.time.mul(6.4), uniforms.time.mul(8.8))));
+  const rippleFade = float(1).sub(smoothstep(float(30), float(140), vDistance));
+  slope = slope.add(vec2(rippleA, rippleB).mul(rippleStrength).mul(rippleFade));
+
+  const worldNormal = vec3(slope.x.negate(), 1, slope.y.negate()).normalize();
+
+  // Foam: temporal accumulation from the simulation + procedural grain
+  const foamGrain = mx_noise_float(vSampleXZ.mul(0.9)).mul(0.5).add(0.5);
+  const foamGrainFine = mx_noise_float(vSampleXZ.mul(3.7).add(uniforms.time.mul(0.06))).mul(0.5).add(0.5);
+  const foamAmount = foamRaw
+    .mul(uniforms.foamIntensity)
+    .mul(foamGrain.mul(0.45).add(0.62))
+    .mul(foamGrainFine.mul(0.35).add(0.72))
+    .clamp(0, 1);
+  const foamBlend = smoothstep(float(0.12), float(0.62), foamAmount);
+
+  // Water body color: dark absorption base, brighter scatter on crests/turbidity
+  const crestLift = vHeight.mul(0.5).add(0.5).clamp(0, 1);
+  const scatterAmount = crestLift.mul(0.36).add(uniforms.turbidity.mul(0.3)).clamp(0, 1);
+  const waterAlbedo = mix(uniforms.absorptionColor, uniforms.scatterColor, scatterAmount);
+  const foamColor = color("#e8f4f6");
+
+  material.colorNode = mix(waterAlbedo, foamColor, foamBlend);
+  material.normalNode = transformNormalToView(worldNormal);
+
+  const baseRoughness = float(0.045)
+    .add(roughnessBoost)
+    .add(uniforms.precipitation.mul(0.06))
+    .add(foamBlend.mul(0.5));
+  material.roughnessNode = baseRoughness.clamp(0.02, 0.95);
+
+  // Approximate subsurface scattering: sunlight transmitted through wave crests
+  // when looking toward the sun, strongest for tall thin waves.
   const viewDir = cameraPosition.sub(positionWorld).normalize();
-  const fresnel = float(1).sub(surfaceNormal.dot(viewDir).max(0)).pow(5).clamp();
-  const sunGlint = surfaceNormal.dot(uniforms.sunDirection).max(0).pow(96).mul(uniforms.sunVisibility);
-  const moonGlint = surfaceNormal.dot(uniforms.moonDirection).max(0).pow(84).mul(uniforms.moonVisibility);
-  const breaking = slope
-    .smoothstep(float(0.2), float(0.82))
-    .mul(0.42)
-    .add(crestCompression.mul(0.48))
-    .add(curvature.mul(0.34))
-    .add(uniforms.storm.mul(0.18))
-    .clamp();
-  const foamNoise = mx_noise_float(detailUv.mul(0.19).add(uniforms.time.mul(0.18))).mul(0.5).add(0.5).clamp();
-  const foamGrain = smoothstep(float(0.28), float(0.82), foamNoise);
-  const foamMask = breaking.mul(uniforms.foamIntensity).mul(foamGrain.mul(0.42).add(0.72)).clamp();
+  const towardSun = viewDir.negate().dot(uniforms.sunDirection).max(0);
+  const crest = vHeight.mul(0.32).add(0.08).max(0);
+  const sss = towardSun.pow(3).mul(crest).mul(uniforms.sunVisibility);
+  const sssAmbient = crest.mul(0.06).mul(uniforms.sunVisibility);
+  material.emissiveNode = uniforms.scatterColor
+    .mul(uniforms.sunColor)
+    .mul(sss.mul(1.35).add(sssAmbient))
+    .mul(float(1).sub(foamBlend));
 
-  const deep = color("#063b4d");
-  const storm = color("#071016");
-  const foamColor = color("#d7eef2");
-  const baseWater = mix(uniforms.waterAbsorption, deep, height.mul(0.06).add(0.48).clamp());
-  const reflected = uniforms.reflectionColor.mul(float(0.28).add(fresnel.mul(0.82))).mul(float(1).sub(uniforms.cloudShadow.mul(0.35)));
-  let finalColor = mix(baseWater, reflected, float(0.1).add(fresnel.mul(0.48)).sub(roughness.mul(0.12)).clamp(0, 0.62));
-  finalColor = mix(finalColor, storm, uniforms.storm.mul(0.38));
-  finalColor = mix(finalColor, foamColor, foamMask.mul(0.62));
-  finalColor = finalColor
-    .add(uniforms.sunColor.mul(sunGlint).mul(0.8))
-    .add(uniforms.moonColor.mul(moonGlint).mul(0.28))
-    .mul(uniforms.exposure);
+  // ------------------------------------------------------------- debug views
+  const fresnelDebug = float(1).sub(worldNormal.dot(viewDir).max(0)).pow(5).clamp(0, 1);
+  const debugColor = Fn(() => {
+    let result: NodeRef = vec3(0, 0, 0);
+    const heightVis = vHeight.mul(0.14).add(0.5).clamp(0, 1);
+    result = result.add(vec3(heightVis.mul(0.2), heightVis.mul(0.65), heightVis).mul(uniforms.debugHeight));
+    result = result.add(worldNormal.mul(0.5).add(0.5).mul(uniforms.debugNormal));
+    result = result.add(vec3(foamAmount, foamAmount, foamAmount).mul(uniforms.debugFoam));
+    const jacobianVis = jacobianMin.mul(0.5).clamp(0, 1);
+    result = result.add(vec3(float(1).sub(jacobianVis), jacobianVis, jacobianVis.mul(0.4)).mul(uniforms.debugJacobian));
+    const slopeVis = slope.length().mul(1.4).clamp(0, 1);
+    result = result.add(vec3(slopeVis, slopeVis.mul(0.6), slopeVis.mul(0.2)).mul(uniforms.debugSlope));
+    result = result.add(cascadeDebug.mul(2).clamp(0, 1).mul(uniforms.debugCascades));
+    result = result.add(vec3(fresnelDebug, fresnelDebug, fresnelDebug).mul(uniforms.debugFresnel));
+    return result;
+  })();
 
-  const heightDebug = vec3(height.mul(0.08).add(0.5).clamp().mul(0.25), height.mul(0.08).add(0.5).clamp().mul(0.8), float(1));
-  const normalDebug = vec3(surfaceNormal.x.mul(0.5).add(0.5), surfaceNormal.y.clamp(), surfaceNormal.z.mul(0.5).add(0.5));
-  const detailNormalDebug = vec3(detailNormal.x.mul(0.5).add(0.5), detailNormal.y.clamp(), detailNormal.z.mul(0.5).add(0.5));
-  const scalarFoam = vec3(foamMask, foamMask, foamMask);
-  const scalarBreaking = vec3(breaking, breaking.mul(0.55), breaking.mul(0.18));
-  const scalarCurvature = vec3(curvature, crestCompression, crestDetail);
-  const scalarRoughness = vec3(roughness, roughness, roughness);
-  const scalarFresnel = vec3(fresnel, fresnel, fresnel);
-  const scalarSlope = vec3(slope, uniforms.storm, uniforms.swellStrength);
+  const debugBlend = uniforms.debugHeight
+    .add(uniforms.debugNormal)
+    .add(uniforms.debugFoam)
+    .add(uniforms.debugJacobian)
+    .add(uniforms.debugSlope)
+    .add(uniforms.debugCascades)
+    .add(uniforms.debugFresnel)
+    .clamp(0, 1);
+  material.outputNode = mix(output, vec4(debugColor, 1), debugBlend);
 
-  finalColor = mix(finalColor, heightDebug, uniforms.debugHeight);
-  finalColor = mix(finalColor, normalDebug, uniforms.debugNormal);
-  finalColor = mix(finalColor, scalarFoam, uniforms.debugFoam);
-  finalColor = mix(finalColor, scalarBreaking, uniforms.debugBreaking);
-  finalColor = mix(finalColor, scalarCurvature, uniforms.debugCurvature);
-  finalColor = mix(finalColor, detailNormalDebug, uniforms.debugDetailNormal);
-  finalColor = mix(finalColor, scalarRoughness, uniforms.debugRoughness);
-  finalColor = mix(finalColor, scalarFresnel, uniforms.debugFresnel);
-  finalColor = mix(finalColor, scalarSlope, uniforms.debugSlope);
-
-  return { height, chopX, chopZ, roughness, color: finalColor, surfaceNormal };
+  return { material, uniforms, derivativeNodes };
 }

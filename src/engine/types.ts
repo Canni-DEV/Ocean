@@ -5,16 +5,13 @@ export type WeatherPresetName = "clear" | "cloudy" | "rain";
 export type DebugRenderMode =
   | "final"
   | "wireframe"
-  | "ocean-height"
-  | "ocean-normal"
+  | "height"
+  | "normal"
   | "foam"
-  | "breaking"
-  | "curvature"
-  | "detail-normal"
-  | "roughness"
-  | "fresnel"
-  | "wave-slope"
-  | "weather";
+  | "jacobian"
+  | "slope"
+  | "cascades"
+  | "fresnel";
 
 export type WeatherState = {
   windDirectionRad: number;
@@ -55,18 +52,10 @@ export type EnvironmentState = {
   moonColor: string;
   moonIntensity: number;
   cloudShadow: number;
-  reflectionColor: string;
   waterAbsorptionColor: string;
+  waterScatterColor: string;
   exposure: number;
   celestial: CelestialState;
-};
-
-export type OceanSettings = {
-  resolution: 256;
-  patchSizeMeters: number;
-  windDirectionRad: number;
-  windSpeedMs: number;
-  choppiness: number;
 };
 
 export type CameraDebugState = {
@@ -84,6 +73,7 @@ export type EngineMetrics = {
   cpuMs: number;
   gpuMs: number | null;
   oceanComputeMs: number | null;
+  seaLevelAtCameraM: number | null;
   worldTimeHours: number;
   camera: CameraDebugState;
   originOffsetMeters: { x: number; z: number };
@@ -97,6 +87,8 @@ export type DebugSettings = {
   weatherPreset: WeatherPresetName;
   worldTimeHours: number;
   timeScale: number;
+  /** Master sea state control, Beaufort scale 0-12. */
+  beaufort: number;
   showSky: boolean;
   showOcean: boolean;
   oceanDisplacement: boolean;
@@ -104,11 +96,15 @@ export type DebugSettings = {
   showRain: boolean;
   wireframe: boolean;
   paused: boolean;
+  /** Advanced physical spectrum parameters. */
+  fetchKm: number;
+  swellAmount: number;
+  swellDirectionDeg: number;
+  choppiness: number;
+  foamIntensity: number;
+  foamDecay: number;
+  waterTurbidity: number;
   cloudCoverageBias: number;
   cloudDensityBias: number;
-  stormBias: number;
-  waveScale: number;
-  waterRoughnessBias: number;
-  foamIntensity: number;
   exposureBias: number;
 };

@@ -1,11 +1,13 @@
 import * as THREE from "three/webgpu";
 import { AtmosphereSystem } from "../atmosphere/AtmosphereSystem";
+import { OceanPhysicsSampler } from "../ocean/OceanPhysicsSampler";
 import { OceanRenderer } from "../ocean/OceanRenderer";
-import { WaveField } from "../ocean/WaveField";
+import { OceanSimulation, OCEAN_QUALITY } from "../ocean/simulation/OceanSimulation";
 import { cloneWeather, lerpWeather, WEATHER_PRESETS } from "../state/weather";
+import { buildSeaState, lerpSeaState, type SeaStateParams } from "../state/seaState";
 import { FrameStats } from "./FrameStats";
 import { InputController } from "./InputController";
-import type { DebugSettings, EngineMetrics, WeatherPresetName, WeatherState } from "./types";
+import type { DebugSettings, EngineMetrics, QualityTier, WeatherPresetName, WeatherState } from "./types";
 
 type EngineAppOptions = {
   canvas: HTMLCanvasElement;
@@ -15,6 +17,7 @@ type EngineAppOptions = {
 
 const FLOATING_ORIGIN_THRESHOLD_METERS = 5000;
 const WEATHER_TRANSITION_SECONDS = 8;
+const BASE_TONE_MAPPING_EXPOSURE = 0.38;
 
 export class EngineApp {
   private readonly canvas: HTMLCanvasElement;
@@ -24,22 +27,26 @@ export class EngineApp {
   private readonly stats = new FrameStats();
 
   private renderer: THREE.WebGPURenderer | null = null;
+  private simulation: OceanSimulation | null = null;
   private ocean: OceanRenderer | null = null;
-  private waveField: WaveField;
+  private physics: OceanPhysicsSampler | null = null;
   private atmosphere: AtmosphereSystem | null = null;
   private animationFrame = 0;
   private lastFrameMs = performance.now();
   private lastMetricsMs = 0;
   private disposed = false;
   private settings: DebugSettings;
+  private activeQuality: QualityTier;
   private worldTimeHours: number;
   private weatherPreset: WeatherPresetName;
   private weatherSource: WeatherState;
   private weatherTarget: WeatherState;
   private weatherCurrent: WeatherState;
   private weatherTransitionSeconds = WEATHER_TRANSITION_SECONDS;
+  private seaStateCurrent: SeaStateParams | null = null;
   private originOffsetMeters = { x: 0, z: 0 };
   private oceanComputeMs: number | null = null;
+  private simulationTimeSeconds = 0;
   private status: EngineMetrics["status"] = "booting";
   private error: string | null = null;
 
@@ -47,12 +54,12 @@ export class EngineApp {
     this.canvas = options.canvas;
     this.onMetrics = options.onMetrics;
     this.settings = { ...options.initialSettings };
+    this.activeQuality = options.initialSettings.quality;
     this.worldTimeHours = options.initialSettings.worldTimeHours;
     this.weatherPreset = options.initialSettings.weatherPreset;
     this.weatherSource = cloneWeather(WEATHER_PRESETS[this.weatherPreset]);
     this.weatherTarget = cloneWeather(WEATHER_PRESETS[this.weatherPreset]);
     this.weatherCurrent = cloneWeather(WEATHER_PRESETS[this.weatherPreset]);
-    this.waveField = new WaveField(this.weatherCurrent, this.settings);
     this.input = new InputController(this.canvas);
   }
 
@@ -76,6 +83,10 @@ export class EngineApp {
       this.weatherTransitionSeconds = 0;
     }
 
+    if (settings.quality !== this.activeQuality && this.renderer) {
+      this.rebuildOcean(settings.quality);
+    }
+
     this.ocean?.applySettings(settings);
     this.atmosphere?.applySettings(settings);
   }
@@ -86,6 +97,7 @@ export class EngineApp {
     cancelAnimationFrame(this.animationFrame);
     this.input.dispose();
     this.ocean?.dispose();
+    this.simulation?.dispose();
     this.atmosphere?.dispose();
     this.renderer?.dispose();
   }
@@ -102,23 +114,49 @@ export class EngineApp {
         alpha: false
       });
       this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+      this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      this.renderer.toneMappingExposure = BASE_TONE_MAPPING_EXPOSURE;
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
       await this.renderer.init();
 
       this.atmosphere = new AtmosphereSystem(this.scene);
-      this.ocean = new OceanRenderer({ scene: this.scene, waveField: this.waveField });
+      this.createOcean(this.settings.quality);
       this.atmosphere.applySettings(this.settings);
-      this.ocean.applySettings(this.settings);
+      this.ocean?.applySettings(this.settings);
 
       window.addEventListener("resize", this.resize);
       this.resize();
       this.status = "running";
+      (window as any).__engine = this;
       this.loop();
     } catch (error) {
       this.status = "error";
       this.error = error instanceof Error ? error.message : String(error);
       this.publishMetrics();
     }
+  }
+
+  private createOcean(tier: QualityTier): void {
+    this.activeQuality = tier;
+    const simulation = new OceanSimulation(tier);
+    const ocean = new OceanRenderer({ scene: this.scene, simulation });
+    ocean.applySettings(this.settings);
+    this.simulation = simulation;
+    this.ocean = ocean;
+    this.physics = new OceanPhysicsSampler(simulation);
+    this.seaStateCurrent = null;
+
+    const quality = OCEAN_QUALITY[tier];
+    this.atmosphere?.setEnvironmentQuality(quality.envMapSize, quality.envMapIntervalMs);
+  }
+
+  private rebuildOcean(tier: QualityTier): void {
+    this.ocean?.dispose();
+    this.simulation?.dispose();
+    this.ocean = null;
+    this.simulation = null;
+    this.physics = null;
+    this.createOcean(tier);
   }
 
   private readonly resize = (): void => {
@@ -130,7 +168,7 @@ export class EngineApp {
   };
 
   private loop = (): void => {
-    if (this.disposed || !this.renderer || !this.ocean || !this.atmosphere) {
+    if (this.disposed || !this.renderer || !this.ocean || !this.simulation || !this.atmosphere) {
       return;
     }
 
@@ -145,21 +183,40 @@ export class EngineApp {
       this.worldTimeHours = (this.worldTimeHours + (deltaSeconds * this.settings.timeScale) / 3600) % 24;
       this.updateWeather(deltaSeconds);
       this.applyFloatingOrigin();
+      this.simulationTimeSeconds += deltaSeconds;
     }
 
     const tunedWeather = this.applyDebugWeatherOverrides(this.weatherCurrent);
     const environment = this.atmosphere.update({
+      renderer: this.renderer,
       camera: this.input.camera,
       deltaSeconds,
       weather: tunedWeather,
       worldTimeHours: this.worldTimeHours
     });
-    this.oceanComputeMs = this.ocean.update(
+
+    this.renderer.toneMappingExposure = BASE_TONE_MAPPING_EXPOSURE * environment.exposure;
+
+    // Smoothly track the target sea state and run the spectral simulation
+    this.updateSeaState(tunedWeather, deltaSeconds);
+    if (!this.settings.paused) {
+      this.simulation.update(this.renderer, this.simulationTimeSeconds, deltaSeconds);
+    }
+    this.oceanComputeMs = this.simulation.computeMs;
+
+    this.ocean.update(
       this.input.camera,
       tunedWeather,
       environment,
       this.settings,
-      now / 1000
+      this.originOffsetMeters,
+      this.simulationTimeSeconds
+    );
+
+    this.physics?.update(
+      this.renderer,
+      this.input.camera.position.x + this.originOffsetMeters.x,
+      this.input.camera.position.z + this.originOffsetMeters.z
     );
 
     try {
@@ -179,6 +236,21 @@ export class EngineApp {
     this.animationFrame = requestAnimationFrame(this.loop);
   };
 
+  private updateSeaState(weather: WeatherState, deltaSeconds: number): void {
+    if (!this.simulation) return;
+
+    const target = buildSeaState(weather, this.settings);
+    if (this.seaStateCurrent === null) {
+      this.seaStateCurrent = target;
+    } else {
+      // Exponential smoothing (~2 s time constant) for gentle spectrum shifts
+      const blend = 1 - Math.exp(-deltaSeconds / 2);
+      this.seaStateCurrent = lerpSeaState(this.seaStateCurrent, target, blend);
+    }
+
+    this.simulation.setSeaState(this.seaStateCurrent);
+  }
+
   private updateWeather(deltaSeconds: number): void {
     this.weatherTransitionSeconds = Math.min(
       WEATHER_TRANSITION_SECONDS,
@@ -193,10 +265,7 @@ export class EngineApp {
       ...weather,
       cloudCoverage: THREE.MathUtils.clamp(weather.cloudCoverage + this.settings.cloudCoverageBias, 0, 1),
       cloudDensity: THREE.MathUtils.clamp(weather.cloudDensity + this.settings.cloudDensityBias, 0, 1),
-      cloudDarkening: THREE.MathUtils.clamp(weather.cloudDarkening + this.settings.stormBias * 0.45, 0, 1),
-      precipitation: THREE.MathUtils.clamp(weather.precipitation + this.settings.stormBias * 0.35, 0, 1),
-      stormIntensity: THREE.MathUtils.clamp(weather.stormIntensity + this.settings.stormBias, 0, 1),
-      visibilityKm: THREE.MathUtils.clamp(weather.visibilityKm - this.settings.stormBias * 12, 2, 45)
+      swellDirectionRad: (this.settings.swellDirectionDeg * Math.PI) / 180
     };
   }
 
@@ -217,6 +286,10 @@ export class EngineApp {
   private publishMetrics(): void {
     const camera = this.input.camera.position;
     const yawPitch = this.input.getYawPitchDeg();
+    const seaLevel = this.physics?.getHeightAt(
+      camera.x + this.originOffsetMeters.x,
+      camera.z + this.originOffsetMeters.z
+    );
 
     this.onMetrics({
       backend: "webgpu",
@@ -225,6 +298,7 @@ export class EngineApp {
       cpuMs: this.stats.cpuMs,
       gpuMs: null,
       oceanComputeMs: this.oceanComputeMs,
+      seaLevelAtCameraM: seaLevel ?? null,
       worldTimeHours: this.worldTimeHours,
       camera: {
         x: camera.x + this.originOffsetMeters.x,

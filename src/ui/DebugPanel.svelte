@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { DebugRenderMode, DebugSettings, EngineMetrics, QualityTier, WeatherPresetName } from "../engine/types";
+  import { WEATHER_DEFAULT_BEAUFORT } from "../state/weather";
+  import { beaufortToWindSpeed } from "../state/seaState";
 
   type Props = {
     settings: DebugSettings;
@@ -8,6 +10,7 @@
   };
 
   let { settings, metrics, onChange }: Props = $props();
+  let showAdvanced = $state(false);
 
   const weatherOptions: Array<{ value: WeatherPresetName; label: string }> = [
     { value: "clear", label: "Despejado" },
@@ -24,30 +27,53 @@
   const debugModes: Array<{ value: DebugRenderMode; label: string }> = [
     { value: "final", label: "Final" },
     { value: "wireframe", label: "Wire" },
-    { value: "ocean-height", label: "Height" },
-    { value: "ocean-normal", label: "Normal" },
+    { value: "height", label: "Height" },
+    { value: "normal", label: "Normal" },
     { value: "foam", label: "Foam" },
-    { value: "breaking", label: "Breaking" },
-    { value: "curvature", label: "Curve" },
-    { value: "detail-normal", label: "Detail N" },
-    { value: "roughness", label: "Rough" },
-    { value: "fresnel", label: "Fresnel" },
-    { value: "wave-slope", label: "Slope" },
-    { value: "weather", label: "Weather" }
+    { value: "jacobian", label: "Jacobian" },
+    { value: "slope", label: "Slope" },
+    { value: "cascades", label: "Cascades" },
+    { value: "fresnel", label: "Fresnel" }
+  ];
+
+  const beaufortLabels = [
+    "Calma",
+    "Ventolina",
+    "Brisa muy débil",
+    "Brisa débil",
+    "Brisa moderada",
+    "Brisa fresca",
+    "Brisa fuerte",
+    "Viento fuerte",
+    "Temporal",
+    "Temporal fuerte",
+    "Temporal duro",
+    "Temporal muy duro",
+    "Huracán"
   ];
 
   function patch(next: Partial<DebugSettings>) {
     onChange({ ...settings, ...next });
   }
 
+  function selectWeather(preset: WeatherPresetName) {
+    patch({ weatherPreset: preset, beaufort: WEATHER_DEFAULT_BEAUFORT[preset] });
+  }
+
+  const beaufortLabel = $derived(beaufortLabels[Math.round(Math.min(12, Math.max(0, settings.beaufort)))]);
+  const windSpeed = $derived(beaufortToWindSpeed(settings.beaufort));
+
   const metricCards = $derived([
     { label: "FPS", value: metrics.fps.toFixed(0) },
     { label: "Frame", value: `${metrics.frameMs.toFixed(1)} ms` },
     { label: "CPU", value: `${metrics.cpuMs.toFixed(1)} ms` },
-    { label: "GPU", value: metrics.gpuMs === null ? "n/a" : `${metrics.gpuMs.toFixed(1)} ms` },
     {
       label: "Ocean Upd",
       value: metrics.oceanComputeMs === null ? "n/a" : `${metrics.oceanComputeMs.toFixed(1)} ms`
+    },
+    {
+      label: "Sea Level",
+      value: metrics.seaLevelAtCameraM === null ? "n/a" : `${metrics.seaLevelAtCameraM.toFixed(2)} m`
     },
     { label: "Backend", value: metrics.backend.toUpperCase() }
   ]);
@@ -81,7 +107,7 @@
   <div class="mb-3 flex items-start justify-between gap-3">
     <div>
       <h1 class="text-sm font-semibold tracking-normal">Ocean Prototype</h1>
-      <p class="mt-1 text-slate-400">WebGPU technical slice</p>
+      <p class="mt-1 text-slate-400">FFT spectral ocean, WebGPU</p>
     </div>
     <span class:status-ok={metrics.status === "running"} class:status-error={metrics.status === "error"} class="rounded px-2 py-1 text-[11px] uppercase">
       {metrics.status}
@@ -106,7 +132,7 @@
   <section class="mt-3 grid grid-cols-2 gap-2">
     <label>
       <span>Weather</span>
-      <select value={settings.weatherPreset} onchange={(event) => patch({ weatherPreset: value(event) as WeatherPresetName })}>
+      <select value={settings.weatherPreset} onchange={(event) => selectWeather(value(event) as WeatherPresetName)}>
         {#each weatherOptions as option}
           <option value={option.value}>{option.label}</option>
         {/each}
@@ -138,36 +164,65 @@
     </label>
   </section>
 
-  <section class="mt-3 grid grid-cols-2 gap-2">
-    <label>
-      <span>Cloud Cover {settings.cloudCoverageBias.toFixed(2)}</span>
-      <input min="-0.5" max="0.5" step="0.01" type="range" value={settings.cloudCoverageBias} oninput={(event) => patch({ cloudCoverageBias: numberValue(event) })} />
+  <section class="mt-3 rounded border border-sky-400/25 bg-sky-950/30 p-2">
+    <label class="block">
+      <span class="!text-sky-300">Estado del mar — Beaufort {settings.beaufort.toFixed(1)}</span>
+      <input min="0" max="12" step="0.1" type="range" value={settings.beaufort} oninput={(event) => patch({ beaufort: numberValue(event) })} />
     </label>
-    <label>
-      <span>Cloud Density {settings.cloudDensityBias.toFixed(2)}</span>
-      <input min="-0.5" max="0.5" step="0.01" type="range" value={settings.cloudDensityBias} oninput={(event) => patch({ cloudDensityBias: numberValue(event) })} />
-    </label>
-    <label>
-      <span>Storm {settings.stormBias.toFixed(2)}</span>
-      <input min="-0.5" max="0.5" step="0.01" type="range" value={settings.stormBias} oninput={(event) => patch({ stormBias: numberValue(event) })} />
-    </label>
-    <label>
-      <span>Wave Scale {settings.waveScale.toFixed(2)}</span>
-      <input min="0.25" max="2.25" step="0.01" type="range" value={settings.waveScale} oninput={(event) => patch({ waveScale: numberValue(event) })} />
-    </label>
-    <label>
-      <span>Roughness {settings.waterRoughnessBias.toFixed(2)}</span>
-      <input min="-0.35" max="0.45" step="0.01" type="range" value={settings.waterRoughnessBias} oninput={(event) => patch({ waterRoughnessBias: numberValue(event) })} />
-    </label>
-    <label>
-      <span>Foam {settings.foamIntensity.toFixed(2)}</span>
-      <input min="0" max="2" step="0.01" type="range" value={settings.foamIntensity} oninput={(event) => patch({ foamIntensity: numberValue(event) })} />
-    </label>
-    <label class="col-span-2">
-      <span>Exposure {settings.exposureBias.toFixed(2)}</span>
-      <input min="-0.45" max="0.45" step="0.01" type="range" value={settings.exposureBias} oninput={(event) => patch({ exposureBias: numberValue(event) })} />
-    </label>
+    <p class="mt-1 text-[11px] text-slate-400">{beaufortLabel} · viento {windSpeed.toFixed(1)} m/s</p>
   </section>
+
+  <button
+    class="mt-3 w-full rounded border border-white/10 bg-white/[0.045] px-2 py-1.5 text-left text-[11px] uppercase tracking-wide text-slate-400 hover:bg-white/[0.08]"
+    onclick={() => (showAdvanced = !showAdvanced)}
+  >
+    {showAdvanced ? "▾" : "▸"} Parámetros avanzados
+  </button>
+
+  {#if showAdvanced}
+    <section class="mt-2 grid grid-cols-2 gap-2">
+      <label>
+        <span>Fetch {settings.fetchKm.toFixed(0)} km</span>
+        <input min="20" max="1000" step="10" type="range" value={settings.fetchKm} oninput={(event) => patch({ fetchKm: numberValue(event) })} />
+      </label>
+      <label>
+        <span>Choppiness {settings.choppiness.toFixed(2)}</span>
+        <input min="0" max="2" step="0.01" type="range" value={settings.choppiness} oninput={(event) => patch({ choppiness: numberValue(event) })} />
+      </label>
+      <label>
+        <span>Swell {settings.swellAmount.toFixed(2)}</span>
+        <input min="0" max="1" step="0.01" type="range" value={settings.swellAmount} oninput={(event) => patch({ swellAmount: numberValue(event) })} />
+      </label>
+      <label>
+        <span>Swell Dir {settings.swellDirectionDeg.toFixed(0)}°</span>
+        <input min="0" max="360" step="1" type="range" value={settings.swellDirectionDeg} oninput={(event) => patch({ swellDirectionDeg: numberValue(event) })} />
+      </label>
+      <label>
+        <span>Foam {settings.foamIntensity.toFixed(2)}</span>
+        <input min="0" max="2" step="0.01" type="range" value={settings.foamIntensity} oninput={(event) => patch({ foamIntensity: numberValue(event) })} />
+      </label>
+      <label>
+        <span>Foam Decay {settings.foamDecay.toFixed(2)}</span>
+        <input min="0.02" max="0.6" step="0.01" type="range" value={settings.foamDecay} oninput={(event) => patch({ foamDecay: numberValue(event) })} />
+      </label>
+      <label>
+        <span>Turbidez {settings.waterTurbidity.toFixed(2)}</span>
+        <input min="0" max="1" step="0.01" type="range" value={settings.waterTurbidity} oninput={(event) => patch({ waterTurbidity: numberValue(event) })} />
+      </label>
+      <label>
+        <span>Exposure {settings.exposureBias.toFixed(2)}</span>
+        <input min="-0.45" max="0.45" step="0.01" type="range" value={settings.exposureBias} oninput={(event) => patch({ exposureBias: numberValue(event) })} />
+      </label>
+      <label>
+        <span>Cloud Cover {settings.cloudCoverageBias.toFixed(2)}</span>
+        <input min="-0.5" max="0.5" step="0.01" type="range" value={settings.cloudCoverageBias} oninput={(event) => patch({ cloudCoverageBias: numberValue(event) })} />
+      </label>
+      <label>
+        <span>Cloud Density {settings.cloudDensityBias.toFixed(2)}</span>
+        <input min="-0.5" max="0.5" step="0.01" type="range" value={settings.cloudDensityBias} oninput={(event) => patch({ cloudDensityBias: numberValue(event) })} />
+      </label>
+    </section>
+  {/if}
 
   <section class="mt-3 grid grid-cols-2 gap-2">
     <label class="flex min-h-8 items-center justify-between gap-2 rounded border border-white/10 bg-white/[0.045] px-2 py-1">

@@ -54,6 +54,13 @@ export const WEATHER_PRESETS: Record<WeatherPresetName, WeatherState> = {
   }
 };
 
+/** Default Beaufort sea state suggested by each weather preset. */
+export const WEATHER_DEFAULT_BEAUFORT: Record<WeatherPresetName, number> = {
+  clear: 3.5,
+  cloudy: 5.5,
+  rain: 8
+};
+
 export function cloneWeather(state: WeatherState): WeatherState {
   return { ...state };
 }

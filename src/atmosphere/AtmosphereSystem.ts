@@ -1,7 +1,9 @@
 import * as THREE from "three/webgpu";
+import { SkyMesh } from "three/addons/objects/SkyMesh.js";
 import type { DebugSettings, EnvironmentState, WeatherState } from "../engine/types";
 
 type AtmosphereUpdateOptions = {
+  renderer: THREE.WebGPURenderer;
   camera: THREE.Camera;
   deltaSeconds: number;
   weather: WeatherState;
@@ -11,22 +13,29 @@ type AtmosphereUpdateOptions = {
 const STAR_COUNT = 1200;
 const RAIN_COUNT = 3400;
 
+/**
+ * Physically based sky (Preetham single-scattering via SkyMesh) with a
+ * dynamic environment cubemap that feeds water reflections and scene IBL,
+ * plus sun/moon lights, stars, exponential fog and rain particles.
+ */
 export class AtmosphereSystem {
   private readonly scene: THREE.Scene;
+  private readonly sky: SkyMesh;
   private readonly sunLight = new THREE.DirectionalLight(0xfff2d0, 2.4);
   private readonly moonLight = new THREE.DirectionalLight(0x9fb8ff, 0.18);
-  private readonly ambientLight = new THREE.HemisphereLight(0xb9dcff, 0x0d1520, 0.75);
-  private readonly skySphere: THREE.Mesh;
-  private readonly skyColors: Float32Array;
-  private readonly skyMaterial: THREE.MeshBasicMaterial;
-  private readonly sunDisc: THREE.Mesh;
-  private readonly sunMaterial: THREE.MeshBasicMaterial;
+  private readonly ambientLight = new THREE.HemisphereLight(0xb9dcff, 0x0d1520, 0.28);
   private readonly moonDisc: THREE.Mesh;
   private readonly moonMaterial: THREE.MeshBasicMaterial;
   private readonly stars: THREE.Points;
   private readonly starMaterial: THREE.PointsMaterial;
   private readonly rain: THREE.Points;
   private readonly rainMaterial: THREE.PointsMaterial;
+  private readonly envScene = new THREE.Scene();
+
+  private cubeRenderTarget: THREE.CubeRenderTarget | null = null;
+  private cubeCamera: THREE.CubeCamera | null = null;
+  private envMapIntervalMs = 250;
+  private lastEnvCaptureMs = -Infinity;
   private settings: DebugSettings | null = null;
   private showSky = true;
   private showRain = true;
@@ -34,29 +43,11 @@ export class AtmosphereSystem {
   constructor(scene: THREE.Scene) {
     this.scene = scene;
 
-    const skyGeometry = new THREE.SphereGeometry(9200, 48, 24);
-    const skyPosition = skyGeometry.getAttribute("position") as THREE.BufferAttribute;
-    this.skyColors = new Float32Array(skyPosition.count * 3);
-    skyGeometry.setAttribute("color", new THREE.BufferAttribute(this.skyColors, 3));
-    this.skyMaterial = new THREE.MeshBasicMaterial({
-      side: THREE.BackSide,
-      depthWrite: false,
-      vertexColors: true
-    });
-    this.skySphere = new THREE.Mesh(skyGeometry, this.skyMaterial);
-    this.skySphere.name = "Physically approximated sky gradient";
-    this.skySphere.frustumCulled = false;
-
-    this.sunMaterial = new THREE.MeshBasicMaterial({
-      color: 0xfff2c6,
-      transparent: true,
-      opacity: 1,
-      depthWrite: false,
-      fog: false
-    });
-    this.sunDisc = new THREE.Mesh(new THREE.CircleGeometry(84, 48), this.sunMaterial);
-    this.sunDisc.name = "Visible sun disc";
-    this.sunDisc.frustumCulled = false;
+    this.sky = new SkyMesh();
+    this.sky.scale.setScalar(30000);
+    this.sky.name = "Physically based scattering sky";
+    this.sky.frustumCulled = false;
+    (this.sky.material as any).fog = false;
 
     this.moonMaterial = new THREE.MeshBasicMaterial({
       color: 0xc7d7ff,
@@ -93,17 +84,32 @@ export class AtmosphereSystem {
     this.rain.name = "Camera-centered rain particles";
     this.rain.frustumCulled = false;
 
-    scene.add(this.skySphere, this.stars, this.sunDisc, this.moonDisc, this.rain);
+    scene.add(this.sky, this.stars, this.moonDisc, this.rain);
     scene.add(this.sunLight, this.moonLight, this.ambientLight);
     scene.fog = new THREE.FogExp2(0x6f8795, 0.0009);
+  }
+
+  setEnvironmentQuality(size: number, intervalMs: number): void {
+    if (this.cubeRenderTarget && this.cubeRenderTarget.width === size) {
+      this.envMapIntervalMs = intervalMs;
+      return;
+    }
+
+    this.cubeRenderTarget?.dispose();
+    this.cubeRenderTarget = new THREE.CubeRenderTarget(size);
+    this.cubeRenderTarget.texture.type = THREE.HalfFloatType;
+    this.cubeCamera = new THREE.CubeCamera(0.5, 60000, this.cubeRenderTarget);
+    this.cubeCamera.position.set(0, 8, 0);
+    this.envMapIntervalMs = intervalMs;
+    this.lastEnvCaptureMs = -Infinity;
+    this.scene.environment = this.cubeRenderTarget.texture;
   }
 
   applySettings(settings: DebugSettings): void {
     this.settings = settings;
     this.showSky = settings.showSky;
     this.showRain = settings.showRain;
-    this.skySphere.visible = settings.showSky;
-    this.sunDisc.visible = settings.showSky;
+    this.sky.visible = settings.showSky;
     this.moonDisc.visible = settings.showSky;
     this.stars.visible = settings.showSky;
     this.rain.visible = settings.showRain;
@@ -112,10 +118,6 @@ export class AtmosphereSystem {
   update(options: AtmosphereUpdateOptions): EnvironmentState {
     const weather = options.weather;
     const environment = this.computeEnvironment(options);
-
-    this.scene.background = new THREE.Color(environment.skyHorizonColor);
-    this.skySphere.position.copy(options.camera.position);
-    this.updateSkyGradient(environment, weather);
 
     const sun = new THREE.Vector3(
       environment.celestial.sunDirection.x,
@@ -128,6 +130,23 @@ export class AtmosphereSystem {
       environment.celestial.moonDirection.z
     );
 
+    // Sky shading uniforms
+    this.sky.position.copy(options.camera.position);
+    this.sky.sunPosition.value.copy(sun);
+    const storm = weather.stormIntensity;
+    this.sky.turbidity.value = THREE.MathUtils.clamp(
+      1.8 + weather.humidity * 3.5 + weather.aerosolDensity * 9 + storm * 6,
+      1.5,
+      20
+    );
+    this.sky.rayleigh.value = 1.6 + Math.exp(-Math.abs(sun.y) * 6) * 1.3;
+    this.sky.mieCoefficient.value = 0.0045 + weather.aerosolDensity * 0.012 + weather.precipitation * 0.008;
+    this.sky.mieDirectionalG.value = 0.8;
+    this.sky.cloudCoverage.value = weather.cloudCoverage;
+    this.sky.cloudDensity.value = weather.cloudDensity * (0.55 + weather.cloudDarkening * 0.45);
+    this.sky.cloudSpeed.value = 0.0001 * (1 + weather.windSpeedMs * 0.12);
+
+    // Lights
     this.sunLight.position.copy(sun).multiplyScalar(1200);
     this.sunLight.color.set(environment.sunColor);
     this.sunLight.intensity = environment.sunIntensity;
@@ -136,9 +155,8 @@ export class AtmosphereSystem {
     this.moonLight.intensity = environment.moonIntensity;
     this.ambientLight.color.set(environment.skyZenithColor);
     this.ambientLight.groundColor.set(environment.fogColor);
-    this.ambientLight.intensity = environment.ambientIntensity;
+    this.ambientLight.intensity = environment.ambientIntensity * 0.35;
 
-    this.updateDisc(this.sunDisc, this.sunMaterial, options.camera, sun, environment.celestial.sunVisibility, 7800);
     this.updateDisc(this.moonDisc, this.moonMaterial, options.camera, moon, environment.celestial.moonVisibility, 7600);
     this.moonDisc.scale.x = THREE.MathUtils.lerp(0.35, 1, Math.sin(environment.celestial.moonPhase * Math.PI));
 
@@ -153,29 +171,54 @@ export class AtmosphereSystem {
     }
 
     this.updateRain(options, environment);
+    this.updateEnvironmentMap(options.renderer);
 
     return environment;
   }
 
   dispose(): void {
-    this.skySphere.geometry.dispose();
-    this.skyMaterial.dispose();
-    this.sunDisc.geometry.dispose();
-    this.sunMaterial.dispose();
+    this.sky.geometry.dispose();
+    (this.sky.material as THREE.Material).dispose();
     this.moonDisc.geometry.dispose();
     this.moonMaterial.dispose();
     this.stars.geometry.dispose();
     this.starMaterial.dispose();
     this.rain.geometry.dispose();
     this.rainMaterial.dispose();
-    this.skySphere.removeFromParent();
-    this.sunDisc.removeFromParent();
+    this.cubeRenderTarget?.dispose();
+    this.sky.removeFromParent();
     this.moonDisc.removeFromParent();
     this.stars.removeFromParent();
     this.rain.removeFromParent();
     this.sunLight.removeFromParent();
     this.moonLight.removeFromParent();
     this.ambientLight.removeFromParent();
+    this.scene.environment = null;
+  }
+
+  /**
+   * Captures the sky into the environment cubemap (throttled). The sun disc is
+   * hidden during the capture to avoid a hard bright texel in the PMREM chain;
+   * the sun contribution comes from the directional light instead.
+   */
+  private updateEnvironmentMap(renderer: THREE.WebGPURenderer): void {
+    if (!this.cubeCamera || !this.cubeRenderTarget) return;
+
+    const now = performance.now();
+    if (now - this.lastEnvCaptureMs < this.envMapIntervalMs) return;
+    this.lastEnvCaptureMs = now;
+
+    const skyPosition = this.sky.position.clone();
+    this.sky.position.set(0, 0, 0);
+    this.sky.showSunDisc.value = 0;
+    this.envScene.add(this.sky);
+
+    this.cubeCamera.update(renderer as unknown as THREE.Renderer, this.envScene);
+
+    this.sky.showSunDisc.value = 1;
+    this.sky.position.copy(skyPosition);
+    this.scene.add(this.sky);
+    this.cubeRenderTarget.texture.needsPMREMUpdate = true;
   }
 
   private computeEnvironment(options: AtmosphereUpdateOptions): EnvironmentState {
@@ -207,6 +250,14 @@ export class AtmosphereSystem {
     const starVisibility = night * (1 - weather.cloudCoverage) * (1 - weather.humidity * 0.35);
     const ambientIntensity = THREE.MathUtils.lerp(0.08, 0.92, daylight) * (1 - cloudShadow * 0.55) + night * 0.07;
 
+    const turbidityMix = THREE.MathUtils.clamp(storm * 0.7 + weather.precipitation * 0.4, 0, 1);
+    const absorption = new THREE.Color("#04222e")
+      .lerp(new THREE.Color("#0b1519"), turbidityMix)
+      .lerp(new THREE.Color("#010b12"), night * 0.8);
+    const scatter = new THREE.Color("#0d6a58")
+      .lerp(new THREE.Color("#2d4a44"), turbidityMix)
+      .lerp(new THREE.Color("#04191f"), night * 0.85);
+
     return {
       skyZenithColor: `#${zenith.getHexString()}`,
       skyHorizonColor: `#${horizon.getHexString()}`,
@@ -215,13 +266,13 @@ export class AtmosphereSystem {
       ambientColor: `#${zenith.clone().lerp(horizon, 0.28).getHexString()}`,
       ambientIntensity,
       sunColor: `#${new THREE.Color("#fff5d0").lerp(new THREE.Color("#ff9f58"), twilight * 0.45).getHexString()}`,
-      sunIntensity: THREE.MathUtils.lerp(0.1, 3.2, sunVisibility),
+      sunIntensity: THREE.MathUtils.lerp(0.1, 3.6, sunVisibility),
       moonColor: "#b8caff",
       moonIntensity: THREE.MathUtils.lerp(0.02, 0.36, moonVisibility),
       cloudShadow,
-      reflectionColor: `#${horizon.clone().lerp(zenith, 0.35).getHexString()}`,
-      waterAbsorptionColor: `#${new THREE.Color("#064c66").lerp(new THREE.Color("#11181d"), storm * 0.75).getHexString()}`,
-      exposure: THREE.MathUtils.clamp(1 + exposureBias - cloudShadow * 0.18 + twilight * 0.08, 0.55, 1.35),
+      waterAbsorptionColor: `#${absorption.getHexString()}`,
+      waterScatterColor: `#${scatter.getHexString()}`,
+      exposure: THREE.MathUtils.clamp(1 + exposureBias - cloudShadow * 0.18 + twilight * 0.08, 0.45, 1.6),
       celestial: {
         sunDirection: { x: sun.x, y: sun.y, z: sun.z },
         moonDirection: { x: moon.x, y: moon.y, z: moon.z },
@@ -231,26 +282,6 @@ export class AtmosphereSystem {
         moonPhase: (options.worldTimeHours % 24) / 24
       }
     };
-  }
-
-  private updateSkyGradient(environment: EnvironmentState, weather: WeatherState): void {
-    const geometry = this.skySphere.geometry as THREE.BufferGeometry;
-    const position = geometry.getAttribute("position") as THREE.BufferAttribute;
-    const color = geometry.getAttribute("color") as THREE.BufferAttribute;
-    const zenith = new THREE.Color(environment.skyZenithColor);
-    const horizon = new THREE.Color(environment.skyHorizonColor);
-    const fog = new THREE.Color(environment.fogColor);
-
-    for (let i = 0; i < position.count; i += 1) {
-      const y = (position.getY(i) / 9200 + 1) * 0.5;
-      const t = THREE.MathUtils.smoothstep(y, 0.36, 0.94);
-      const c = horizon.clone().lerp(zenith, t).lerp(fog, weather.aerosolDensity * (1 - t) * 0.38);
-      this.skyColors[i * 3] = c.r;
-      this.skyColors[i * 3 + 1] = c.g;
-      this.skyColors[i * 3 + 2] = c.b;
-    }
-
-    color.needsUpdate = true;
   }
 
   private updateDisc(
