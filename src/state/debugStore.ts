@@ -4,6 +4,7 @@ import type { DebugSettings, EngineMetrics } from "../engine/types";
 export const DEFAULT_DEBUG_SETTINGS: DebugSettings = {
   quality: "medium",
   renderMode: "final",
+  atmosphereDebugMode: "off",
   weatherPreset: "clear",
   worldTimeHours: 16.25,
   timeScale: 180,

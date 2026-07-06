@@ -141,6 +141,39 @@ export const valueFbm2 = (p: NodeRef, octaves: number): NodeRef => {
   return sum.div(totalAmplitude);
 };
 
+/** Tileable 2D value noise in [0, 1], period is per-axis integer lattice size. */
+export const periodicValueNoise2 = /*@__PURE__*/ Fn(([p, period]: NodeRef[]) => {
+  const pi: NodeRef = floor(p);
+  const pf: NodeRef = fract(p);
+  const w: NodeRef = pf.mul(pf).mul(float(3).sub(pf.mul(2)));
+
+  const h = (offset: NodeRef): NodeRef => hash21(wrapCell(pi.add(offset), period));
+  const v00 = h(vec2(0, 0));
+  const v10 = h(vec2(1, 0));
+  const v01 = h(vec2(0, 1));
+  const v11 = h(vec2(1, 1));
+  return mix(mix(v00, v10, w.x), mix(v01, v11, w.x), w.y);
+});
+
+/** Tileable 2D value-noise FBM in [0, 1], octave count fixed at build time. */
+export const periodicValueFbm2 = (p: NodeRef, period: NodeRef, octaves: number): NodeRef => {
+  let sum: NodeRef = float(0);
+  let amplitude = 0.5;
+  let totalAmplitude = 0;
+  let current: NodeRef = p;
+  let currentPeriod: NodeRef = period;
+
+  for (let i = 0; i < octaves; i += 1) {
+    sum = sum.add(periodicValueNoise2(current, currentPeriod).mul(amplitude));
+    totalAmplitude += amplitude;
+    amplitude *= 0.5;
+    current = current.mul(2);
+    currentPeriod = currentPeriod.mul(2);
+  }
+
+  return sum.div(totalAmplitude);
+};
+
 /** 2D Worley noise (non-tileable), 0 at feature points. */
 export const worley2 = /*@__PURE__*/ Fn(([p]: NodeRef[]) => {
   const pi = floor(p);
@@ -151,6 +184,25 @@ export const worley2 = /*@__PURE__*/ Fn(([p]: NodeRef[]) => {
     for (let dx = -1; dx <= 1; dx += 1) {
       const offset = vec2(dx, dy);
       const feature = hash22(pi.add(offset)).add(offset);
+      const delta = feature.sub(pf);
+      minDist.assign(minDist.min(dot(delta, delta)));
+    }
+  }
+
+  return minDist.sqrt().clamp(0, 1);
+});
+
+/** Tileable 2D Worley noise, 0 at feature points. */
+export const periodicWorley2 = /*@__PURE__*/ Fn(([p, period]: NodeRef[]) => {
+  const pi = floor(p);
+  const pf = fract(p);
+  const minDist = float(10).toVar();
+
+  for (let dy = -1; dy <= 1; dy += 1) {
+    for (let dx = -1; dx <= 1; dx += 1) {
+      const offset = vec2(dx, dy);
+      const cell = wrapCell(pi.add(offset), period);
+      const feature = hash22(cell).add(offset);
       const delta = feature.sub(pf);
       minDist.assign(minDist.min(dot(delta, delta)));
     }

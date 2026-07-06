@@ -2,6 +2,16 @@ export type QualityTier = "low" | "medium" | "high";
 
 export type WeatherPresetName = "clear" | "cloudy" | "rain" | "storm";
 
+export type AtmosphereDebugMode =
+  | "off"
+  | "weatherCoverage"
+  | "weatherType"
+  | "precipitation"
+  | "erosion"
+  | "densitySlice"
+  | "historyWeight"
+  | "seamGrid";
+
 export type DebugRenderMode =
   | "final"
   | "wireframe"
@@ -97,6 +107,7 @@ export type EngineMetrics = {
 export type DebugSettings = {
   quality: QualityTier;
   renderMode: DebugRenderMode;
+  atmosphereDebugMode: AtmosphereDebugMode;
   weatherPreset: WeatherPresetName;
   worldTimeHours: number;
   timeScale: number;

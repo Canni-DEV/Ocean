@@ -55,6 +55,8 @@ export class CloudShadowMap {
   private lastCoverage = -1;
   private lastDensity = -1;
   private lastConvectivity = -1;
+  private lastPrecipitation = -1;
+  private lastStorm = -1;
   private lastSunX = 999;
   private lastSunY = 999;
   private lastSunZ = 999;
@@ -92,7 +94,9 @@ export class CloudShadowMap {
     const weatherChanged =
       Math.abs(weather.cloudCoverage - this.lastCoverage) > 0.0008 ||
       Math.abs(weather.cloudDensity - this.lastDensity) > 0.0008 ||
-      Math.abs(weather.convectivity - this.lastConvectivity) > 0.0008;
+      Math.abs(weather.convectivity - this.lastConvectivity) > 0.0008 ||
+      Math.abs(weather.precipitation - this.lastPrecipitation) > 0.0008 ||
+      Math.abs(weather.stormIntensity - this.lastStorm) > 0.0008;
 
     if (!sunChanged && !weatherChanged) return;
 
@@ -102,6 +106,8 @@ export class CloudShadowMap {
     this.lastCoverage = weather.cloudCoverage;
     this.lastDensity = weather.cloudDensity;
     this.lastConvectivity = weather.convectivity;
+    this.lastPrecipitation = weather.precipitation;
+    this.lastStorm = weather.stormIntensity;
 
     this.uCenterAbs.value.set(cameraAbsX, cameraAbsZ);
     this.uSunDir.value.copy(sunDirection).normalize();
@@ -162,21 +168,32 @@ export class CloudShadowMap {
         const weather: NodeRef = weatherTex.sample(wuv).level(float(0));
         const coverage = weather.x.mul(uGlobalCoverage).clamp(0, 1);
         const cloudType = weather.y;
+        const precip = weather.z;
+        const clearAir = weather.w;
 
         const hNorm = altitude.sub(uCloudBase).div(uCloudThickness).clamp(0, 1);
-        const layerHeight = mix(float(0.55), float(1.0), cloudType);
+        const layerHeight = mix(float(0.58), float(1.12), cloudType);
         const hRel = hNorm.div(layerHeight).clamp(0, 1.35);
         const bottom = smoothstep(float(0.0), float(0.09), hRel);
         const top = float(1).sub(smoothstep(mix(float(0.22), float(0.72), cloudType), float(1.0), hRel));
-        const profile = bottom.mul(top);
+        const tower = smoothstep(float(0.12), float(0.48), hRel)
+          .mul(float(1).sub(smoothstep(float(0.74), float(1.08), hRel)))
+          .mul(smoothstep(float(0.35), float(1.0), cloudType))
+          .mul(smoothstep(float(0.18), float(0.92), precip.add(coverage.mul(0.35))));
+        const anvil = smoothstep(float(0.62), float(0.95), hRel)
+          .mul(smoothstep(float(0.65), float(1), cloudType))
+          .mul(smoothstep(float(0.3), float(1), precip.add(cloudType.mul(0.25))))
+          .mul(0.38);
+        const profile = bottom.mul(top.add(tower.mul(0.32)).clamp(0, 1.15));
 
-        const drift = uWindOffset.mul(hNorm.mul(0.35).add(0.75));
+        const drift = uWindOffset.mul(hNorm.mul(mix(float(0.42), float(1.02), cloudType)).add(0.72));
         const noisePos = vec3(posAbsXZ.x.sub(drift.x), altitude, posAbsXZ.y.sub(drift.y));
         const basePN: NodeRef = baseNoise.sample(noisePos.div(BASE_NOISE_METERS)).level(float(0));
         const baseFbm = basePN.y.mul(0.625).add(basePN.z.mul(0.25)).add(basePN.w.mul(0.125));
         const baseShape = remapNode(basePN.x, baseFbm.sub(1), float(1), float(0), float(1));
 
-        const coverageMod = coverage.mul(profile);
+        const erosion = clearAir.mul(mix(float(0.28), float(0.68), cloudType)).mul(mix(float(0.45), float(1), hNorm));
+        const coverageMod = coverage.add(anvil).sub(erosion).clamp(0, 1).mul(profile);
         const cloud = remapNode(baseShape, float(1).sub(coverageMod), float(1), float(0), float(1))
           .mul(coverageMod)
           .max(0);

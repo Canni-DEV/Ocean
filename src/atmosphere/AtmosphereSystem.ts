@@ -173,6 +173,7 @@ export class AtmosphereSystem {
     this.cloudPass = new VolumetricCloudPass(this.cloudNoise, this.weatherMap, CLOUD_QUALITY[tier]);
     this.cloudPass.setSize(this.canvasWidth, this.canvasHeight);
     this.cloudPass.setVisible(this.showSky && this.showClouds);
+    this.cloudPass.setDebugMode(this.settings?.atmosphereDebugMode ?? "off");
     this.scene.add(this.cloudPass.compositeMesh);
   }
 
@@ -192,6 +193,7 @@ export class AtmosphereSystem {
     this.stars.visible = settings.showSky;
     this.rain.visible = settings.showRain;
     this.cloudPass.setVisible(settings.showSky && settings.showClouds);
+    this.cloudPass.setDebugMode(settings.atmosphereDebugMode);
   }
 
   update(options: AtmosphereUpdateOptions): EnvironmentState {

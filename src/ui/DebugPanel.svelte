@@ -1,5 +1,12 @@
 <script lang="ts">
-  import type { DebugRenderMode, DebugSettings, EngineMetrics, QualityTier, WeatherPresetName } from "../engine/types";
+  import type {
+    AtmosphereDebugMode,
+    DebugRenderMode,
+    DebugSettings,
+    EngineMetrics,
+    QualityTier,
+    WeatherPresetName
+  } from "../engine/types";
   import { WEATHER_DEFAULT_BEAUFORT } from "../state/weather";
   import { beaufortToWindSpeed } from "../state/seaState";
 
@@ -35,6 +42,17 @@
     { value: "slope", label: "Slope" },
     { value: "cascades", label: "Cascades" },
     { value: "fresnel", label: "Fresnel" }
+  ];
+
+  const atmosphereDebugModes: Array<{ value: AtmosphereDebugMode; label: string }> = [
+    { value: "off", label: "Off" },
+    { value: "weatherCoverage", label: "Weather Coverage" },
+    { value: "weatherType", label: "Weather Type" },
+    { value: "precipitation", label: "Precipitation" },
+    { value: "erosion", label: "Erosion" },
+    { value: "densitySlice", label: "Density Slice" },
+    { value: "historyWeight", label: "History Weight" },
+    { value: "seamGrid", label: "Seam Grid" }
   ];
 
   const beaufortLabels = [
@@ -229,6 +247,14 @@
       <label>
         <span>Cloud Density {settings.cloudDensityBias.toFixed(2)}</span>
         <input min="-0.5" max="0.5" step="0.01" type="range" value={settings.cloudDensityBias} oninput={(event) => patch({ cloudDensityBias: numberValue(event) })} />
+      </label>
+      <label class="col-span-2">
+        <span>Atmosphere Debug</span>
+        <select value={settings.atmosphereDebugMode} onchange={(event) => patch({ atmosphereDebugMode: value(event) as AtmosphereDebugMode })}>
+          {#each atmosphereDebugModes as option}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
       </label>
     </section>
   {/if}

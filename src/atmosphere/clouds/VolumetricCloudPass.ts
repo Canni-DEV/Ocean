@@ -21,7 +21,7 @@ import {
   vec3,
   vec4
 } from "three/tsl";
-import type { QualityTier } from "../../engine/types";
+import type { AtmosphereDebugMode, QualityTier } from "../../engine/types";
 import type { CloudNoiseTextures } from "./CloudNoiseTextures";
 import type { WeatherMap } from "./WeatherMap";
 import { WEATHER_DOMAIN_METERS } from "./WeatherMap";
@@ -39,14 +39,15 @@ const DETAIL_NOISE_METERS = 950;
 export type CloudQualityConfig = {
   /** Render target scale relative to the canvas (0.25 = quarter res). */
   resolutionScale: number;
+  weatherMapSize: number;
   marchSteps: number;
   lightSteps: number;
 };
 
 export const CLOUD_QUALITY: Record<QualityTier, CloudQualityConfig> = {
-  low: { resolutionScale: 0.25, marchSteps: 32, lightSteps: 4 },
-  medium: { resolutionScale: 0.5, marchSteps: 48, lightSteps: 5 },
-  high: { resolutionScale: 0.5, marchSteps: 64, lightSteps: 6 }
+  low: { resolutionScale: 0.25, weatherMapSize: 1024, marchSteps: 40, lightSteps: 5 },
+  medium: { resolutionScale: 0.5, weatherMapSize: 1024, marchSteps: 64, lightSteps: 6 },
+  high: { resolutionScale: 0.5, weatherMapSize: 1024, marchSteps: 96, lightSteps: 8 }
 };
 
 export type CloudLightingInput = {
@@ -137,8 +138,10 @@ export class VolumetricCloudPass {
   private readonly uFrame: AnyUniform<number> = uniform(0) as any;
   private readonly uHistoryBlend: AnyUniform<number> = uniform(0) as any;
   private readonly uResolution: AnyUniform<THREE.Vector2> = uniform(new THREE.Vector2(2, 2)) as any;
+  private readonly uDebugMode: AnyUniform<number> = uniform(0) as any;
   private readonly historyTexNode: NodeRef;
   private readonly resolvedTexNode: NodeRef;
+  private weatherStability = 1;
 
   constructor(
     noise: CloudNoiseTextures,
@@ -174,6 +177,17 @@ export class VolumetricCloudPass {
   }
 
   updateWeather(weather: CloudWeatherInput): void {
+    const delta =
+      Math.abs(weather.cloudBaseMeters - this.uCloudBase.value) / 6000 +
+      Math.abs(weather.cloudThicknessMeters - this.uCloudThickness.value) / 6000 +
+      Math.abs(weather.cloudDensity - this.uDensityMult.value) +
+      Math.abs(weather.cloudDarkening - this.uDarkening.value) +
+      Math.abs(weather.cloudCoverage - this.uGlobalCoverage.value);
+    this.weatherStability = THREE.MathUtils.clamp(1 - delta * 1.25, 0.18, 1);
+    if (delta > 0.55) {
+      this.historyValid = false;
+    }
+
     this.uCloudBase.value = weather.cloudBaseMeters;
     this.uCloudThickness.value = Math.max(200, weather.cloudThicknessMeters);
     this.uDensityMult.value = weather.cloudDensity;
@@ -181,6 +195,13 @@ export class VolumetricCloudPass {
     this.uGlobalCoverage.value = weather.cloudCoverage;
     this.uCirrus.value = weather.cirrusAmount;
     this.uWindDir.value.set(Math.cos(weather.windDirectionRad), Math.sin(weather.windDirectionRad));
+  }
+
+  setDebugMode(mode: AtmosphereDebugMode): void {
+    this.uDebugMode.value = ATMOSPHERE_DEBUG_MODE_INDEX[mode];
+    if (mode !== "off") {
+      this.historyValid = false;
+    }
   }
 
   updateLighting(input: CloudLightingInput): void {
@@ -224,7 +245,10 @@ export class VolumetricCloudPass {
 
     const cameraDelta = this.prevCameraPos.distanceTo(camera.position);
     const movementFade = THREE.MathUtils.clamp(1 - cameraDelta / 180, 0.25, 1);
-    this.uHistoryBlend.value = this.historyValid ? 0.93 * movementFade : 0;
+    if (cameraDelta > 600) {
+      this.historyValid = false;
+    }
+    this.uHistoryBlend.value = this.historyValid ? 0.93 * movementFade * this.weatherStability : 0;
     this.uPrevProjView.value.copy(this.prevProjView);
 
     const readTarget = this.targets[1 - this.writeIndex];
@@ -337,6 +361,7 @@ export class VolumetricCloudPass {
     const uFrame = this.uFrame;
     const uHistoryBlend = this.uHistoryBlend;
     const uResolution = this.uResolution;
+    const uDebugMode = this.uDebugMode;
     const historyTex = this.historyTexNode;
 
     const MARCH_STEPS = quality.marchSteps;
@@ -362,23 +387,33 @@ export class VolumetricCloudPass {
       const weather = sampleWeather(posAbsXZ).toVar();
       const coverage = weather.x.mul(uGlobalCoverage).clamp(0, 1);
       const cloudType = weather.y;
+      const precip = weather.z;
+      const clearAir = weather.w;
 
       const hNorm = altitude.sub(uCloudBase).div(uCloudThickness).clamp(0, 1);
       // Effective layer height by type: stratus fill more of the slab at horizon
-      const layerHeight = mix(float(0.55), float(1.0), cloudType);
+      const layerHeight = mix(float(0.58), float(1.12), cloudType);
       const hRel = hNorm.div(layerHeight).clamp(0, 1.35);
 
       // Vertical profile: rounded base, type-dependent top; anvil spread near cb tops
       const bottom = smoothstep(float(0.0), float(0.09), hRel);
       const top = float(1).sub(smoothstep(mix(float(0.22), float(0.72), cloudType), float(1.0), hRel));
+      const tower = smoothstep(float(0.12), float(0.48), hRel)
+        .mul(float(1).sub(smoothstep(float(0.74), float(1.08), hRel)))
+        .mul(smoothstep(float(0.35), float(1.0), cloudType))
+        .mul(smoothstep(float(0.18), float(0.92), precip.add(coverage.mul(0.35))));
       const anvil = smoothstep(float(0.62), float(0.95), hRel)
         .mul(smoothstep(float(0.65), float(1), cloudType))
-        .mul(0.35);
-      const profile = bottom.mul(top).mul(smoothstep(float(1.34), float(1.0), hRel));
+        .mul(smoothstep(float(0.3), float(1), precip.add(cloudType.mul(0.25))))
+        .mul(0.42);
+      const profile = bottom
+        .mul(top.add(tower.mul(0.35)).clamp(0, 1.18))
+        .mul(smoothstep(float(1.34), float(1.0), hRel));
 
       // Wind drift with mild vertical shear so tops lag behind bases
-      const shear = hNorm.mul(0.35).add(0.75);
-      const drift = uWindOffset.mul(shear);
+      const shear = hNorm.mul(mix(float(0.42), float(1.08), cloudType)).add(0.72);
+      const crossShear = vec2(uWindDir.y.negate(), uWindDir.x).mul(uWindOffset.length().mul(hNorm.mul(hNorm)).mul(cloudType).mul(0.18));
+      const drift = uWindOffset.mul(shear).add(crossShear);
       const noisePos = vec3(
         posAbsXZ.x.sub(drift.x),
         altitude,
@@ -389,7 +424,12 @@ export class VolumetricCloudPass {
       const baseFbm = basePN.y.mul(0.625).add(basePN.z.mul(0.25)).add(basePN.w.mul(0.125));
       const baseShape = remapNode(basePN.x, baseFbm.sub(1), float(1), float(0), float(1));
 
-      const coverageMod = coverage.add(anvil).clamp(0, 1).mul(profile);
+      const erosion = clearAir.mul(mix(float(0.28), float(0.72), cloudType)).mul(mix(float(0.45), float(1), hNorm));
+      const coverageMod = coverage
+        .add(anvil)
+        .sub(erosion)
+        .clamp(0, 1)
+        .mul(profile);
       let cloud: NodeRef = remapNode(baseShape, float(1).sub(coverageMod), float(1), float(0), float(1))
         .mul(coverageMod)
         .max(0);
@@ -404,8 +444,8 @@ export class VolumetricCloudPass {
       }
 
       // Slightly denser tops for crisper sun-lit crowns
-      const heightDensity = mix(float(0.75), float(1.15), hRel.clamp(0, 1));
-      return vec2(cloud.mul(heightDensity), weather.z);
+      const heightDensity = mix(float(0.72), float(1.2), hRel.clamp(0, 1)).add(tower.mul(0.16));
+      return vec2(cloud.mul(heightDensity), precip.mul(float(1).sub(clearAir.mul(0.55))));
     };
 
     /** Ray-sphere against earth-centered sphere. ro is relative to earth center. */
@@ -429,6 +469,38 @@ export class VolumetricCloudPass {
     return Fn(() => {
       const screenPos: NodeRef = uv();
       const ndc = screenPos.mul(2).sub(1);
+      const debugWeather: NodeRef = weatherTex.sample(screenPos).level(float(0));
+      const seamEdge = float(1)
+        .sub(smoothstep(float(0.0), float(0.012), screenPos.x))
+        .max(smoothstep(float(0.988), float(1.0), screenPos.x))
+        .max(float(1).sub(smoothstep(float(0.0), float(0.012), screenPos.y)))
+        .max(smoothstep(float(0.988), float(1.0), screenPos.y));
+      const debugCoverage = vec4(vec3(debugWeather.x), 0);
+      const debugType = vec4(vec3(debugWeather.y), 0);
+      const debugPrecip = vec4(vec3(debugWeather.z), 0);
+      const debugErosion = vec4(vec3(debugWeather.w), 0);
+      const debugDensity = vec4(vec3(debugWeather.x.mul(float(1).sub(debugWeather.w)).mul(debugWeather.y.mul(0.35).add(0.65))), 0);
+      const debugHistory = vec4(vec3(uHistoryBlend), 0);
+      const debugSeam = vec4(debugWeather.x, debugWeather.w, seamEdge, 0);
+      const debugOut = debugCoverage.toVar();
+      If(uDebugMode.greaterThan(1.5).and(uDebugMode.lessThan(2.5)), () => {
+        debugOut.assign(debugType);
+      })
+        .ElseIf(uDebugMode.greaterThan(2.5).and(uDebugMode.lessThan(3.5)), () => {
+          debugOut.assign(debugPrecip);
+        })
+        .ElseIf(uDebugMode.greaterThan(3.5).and(uDebugMode.lessThan(4.5)), () => {
+          debugOut.assign(debugErosion);
+        })
+        .ElseIf(uDebugMode.greaterThan(4.5).and(uDebugMode.lessThan(5.5)), () => {
+          debugOut.assign(debugDensity);
+        })
+        .ElseIf(uDebugMode.greaterThan(5.5).and(uDebugMode.lessThan(6.5)), () => {
+          debugOut.assign(debugHistory);
+        })
+        .ElseIf(uDebugMode.greaterThan(6.5), () => {
+          debugOut.assign(debugSeam);
+        });
 
       // Reconstruct the world-space view ray from the scene camera matrices
       const viewDir4: NodeRef = uInvProj.mul(vec4(ndc.x, ndc.y, 0.5, 1));
@@ -630,10 +702,12 @@ export class VolumetricCloudPass {
 
       // Horizon fill: low elevation rays get stratus haze so the sky seam is hidden
       const horizonWeight: NodeRef = float(1).sub(smoothstep(float(0.004), float(0.16), worldDir.y));
-      const horizonFill: NodeRef = uGlobalCoverage.mul(horizonWeight).clamp(0, 1);
+      const horizonWeather: NodeRef = sampleWeather(uCamAbsXZ.add(worldDir.xz.mul(WEATHER_DOMAIN_METERS * 0.35)));
+      const horizonLocal = horizonWeather.x.mul(float(1).sub(horizonWeather.w.mul(0.75))).clamp(0, 1);
+      const horizonFill: NodeRef = uGlobalCoverage.mul(horizonLocal).mul(horizonWeight).mul(0.72).clamp(0, 1);
       const horizonColor = mix(uAmbientBottom, uFogColor, float(0.55));
-      radiance.addAssign(horizonColor.mul(horizonFill).mul(0.65).mul(transmittance));
-      transmittance.mulAssign(float(1).sub(horizonFill.mul(0.88)));
+      radiance.addAssign(horizonColor.mul(horizonFill).mul(0.48).mul(transmittance));
+      transmittance.mulAssign(float(1).sub(horizonFill.mul(0.68)));
 
       const current = vec4(radiance, transmittance);
 
@@ -647,9 +721,18 @@ export class VolumetricCloudPass {
         .and(prevUV.y.greaterThanEqual(0))
         .and(prevUV.y.lessThanEqual(1));
       const history: NodeRef = historyTex.sample(prevUV).level(float(0));
+      const texel = vec2(1).div(uResolution);
+      const h1: NodeRef = historyTex.sample(prevUV.add(vec2(texel.x, 0))).level(float(0));
+      const h2: NodeRef = historyTex.sample(prevUV.sub(vec2(texel.x, 0))).level(float(0));
+      const h3: NodeRef = historyTex.sample(prevUV.add(vec2(0, texel.y))).level(float(0));
+      const h4: NodeRef = historyTex.sample(prevUV.sub(vec2(0, texel.y))).level(float(0));
+      const hMin = history.min(h1).min(h2).min(h3).min(h4);
+      const hMax = history.max(h1).max(h2).max(h3).max(h4);
+      const clampedHistory = history.max(hMin.sub(0.08)).min(hMax.add(0.08));
       const blend = uHistoryBlend.mul(inBounds.select(float(1), float(0)));
 
-      return mix(current, history, blend);
+      const temporal = mix(current, clampedHistory, blend);
+      return uDebugMode.greaterThan(0.5).select(debugOut, temporal);
     })();
 
     /** Anisotropic FBM for cirrus streaks, stretched along the wind. */
@@ -679,3 +762,14 @@ export class VolumetricCloudPass {
     }
   }
 }
+
+const ATMOSPHERE_DEBUG_MODE_INDEX: Record<AtmosphereDebugMode, number> = {
+  off: 0,
+  weatherCoverage: 1,
+  weatherType: 2,
+  precipitation: 3,
+  erosion: 4,
+  densitySlice: 5,
+  historyWeight: 6,
+  seamGrid: 7
+};
