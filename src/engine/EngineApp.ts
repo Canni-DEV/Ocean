@@ -1,5 +1,8 @@
 import * as THREE from "three/webgpu";
 import { AtmosphereSystem } from "../atmosphere/AtmosphereSystem";
+import { BoatController, type BoatControlState } from "../boat/BoatController";
+import { BoatPhysics } from "../boat/BoatPhysics";
+import { BoatPlaceholder } from "../boat/BoatPlaceholder";
 import { OceanPhysicsSampler } from "../ocean/OceanPhysicsSampler";
 import { OceanRenderer } from "../ocean/OceanRenderer";
 import { OceanSimulation, OCEAN_QUALITY } from "../ocean/simulation/OceanSimulation";
@@ -23,12 +26,16 @@ export class EngineApp {
   private readonly onMetrics: (metrics: EngineMetrics) => void;
   private readonly scene = new THREE.Scene();
   private readonly input: InputController;
+  private readonly boatController = new BoatController();
+  private readonly boatPhysics = new BoatPhysics();
+  private readonly boatPlaceholder = new BoatPlaceholder();
   private readonly stats = new FrameStats();
 
   private renderer: THREE.WebGPURenderer | null = null;
   private simulation: OceanSimulation | null = null;
   private ocean: OceanRenderer | null = null;
   private physics: OceanPhysicsSampler | null = null;
+  private boatPhysicsSampler: OceanPhysicsSampler | null = null;
   private atmosphere: AtmosphereSystem | null = null;
   private animationFrame = 0;
   private lastFrameMs = performance.now();
@@ -96,10 +103,18 @@ export class EngineApp {
     this.disposed = true;
     cancelAnimationFrame(this.animationFrame);
     this.input.dispose();
+    this.boatController.dispose();
+    this.boatPlaceholder.dispose();
     this.ocean?.dispose();
     this.simulation?.dispose();
     this.atmosphere?.dispose();
     this.renderer?.dispose();
+  }
+
+  resetBoat(): void {
+    const waterHeight = this.boatPhysicsSampler?.getHeightAt(0, 0) ?? this.physics?.getHeightAt(0, 0) ?? null;
+    this.boatPhysics.resetToWorldOrigin(this.originOffsetMeters, waterHeight);
+    this.boatPlaceholder.syncFromPhysics(this.boatPhysics);
   }
 
   private async init(): Promise<void> {
@@ -125,6 +140,8 @@ export class EngineApp {
       this.createOcean(this.settings.quality);
       this.atmosphere.applySettings(this.settings);
       this.ocean?.applySettings(this.settings);
+      this.scene.add(this.boatPlaceholder.group);
+      this.resetBoat();
 
       window.addEventListener("resize", this.resize);
       this.resize();
@@ -150,6 +167,7 @@ export class EngineApp {
     this.simulation = simulation;
     this.ocean = ocean;
     this.physics = new OceanPhysicsSampler(simulation);
+    this.boatPhysicsSampler = new OceanPhysicsSampler(simulation);
     this.seaStateCurrent = null;
 
     const quality = OCEAN_QUALITY[tier];
@@ -163,6 +181,7 @@ export class EngineApp {
     this.ocean = null;
     this.simulation = null;
     this.physics = null;
+    this.boatPhysicsSampler = null;
     this.createOcean(tier);
   }
 
@@ -186,9 +205,11 @@ export class EngineApp {
     const deltaSeconds = deltaMs / 1000;
     this.lastFrameMs = now;
     const statStart = this.stats.begin();
+    let boatControl: BoatControlState | null = null;
 
     if (!this.settings.paused) {
       this.input.update(deltaSeconds);
+      boatControl = this.boatController.update(deltaSeconds);
       this.worldTimeHours = (this.worldTimeHours + (deltaSeconds * this.settings.timeScale) / 3600) % 24;
       this.updateWeather(deltaSeconds);
       this.applyFloatingOrigin();
@@ -196,6 +217,9 @@ export class EngineApp {
     }
 
     const tunedWeather = this.applyDebugWeatherOverrides(this.weatherCurrent);
+    if (!this.settings.paused && boatControl) {
+      this.updateBoat(boatControl, tunedWeather, deltaSeconds);
+    }
     const environment = this.atmosphere.update({
       renderer: this.renderer,
       camera: this.input.camera,
@@ -230,6 +254,14 @@ export class EngineApp {
       this.input.camera.position.x + this.originOffsetMeters.x,
       this.input.camera.position.z + this.originOffsetMeters.z
     );
+    this.boatPhysicsSampler?.update(
+      this.renderer,
+      this.boatPhysics.position.x + this.originOffsetMeters.x,
+      this.boatPhysics.position.z + this.originOffsetMeters.z
+    );
+    if (this.settings.paused) {
+      this.boatPlaceholder.syncFromPhysics(this.boatPhysics);
+    }
 
     try {
       this.renderer.render(this.scene, this.input.camera);
@@ -247,6 +279,17 @@ export class EngineApp {
 
     this.animationFrame = requestAnimationFrame(this.loop);
   };
+
+  private updateBoat(control: BoatControlState, weather: WeatherState, deltaSeconds: number): void {
+    this.boatPhysics.update({
+      deltaSeconds,
+      control,
+      sampler: this.boatPhysicsSampler,
+      weather,
+      originOffsetMeters: this.originOffsetMeters
+    });
+    this.boatPlaceholder.syncFromPhysics(this.boatPhysics);
+  }
 
   private updateSeaState(weather: WeatherState, deltaSeconds: number): void {
     if (!this.simulation) return;
@@ -287,10 +330,14 @@ export class EngineApp {
       return;
     }
 
-    this.originOffsetMeters.x += position.x;
-    this.originOffsetMeters.z += position.z;
+    const shiftX = position.x;
+    const shiftZ = position.z;
+    this.originOffsetMeters.x += shiftX;
+    this.originOffsetMeters.z += shiftZ;
     position.x = 0;
     position.z = 0;
+    this.boatPhysics.applyOriginShift(shiftX, shiftZ);
+    this.boatPlaceholder.syncFromPhysics(this.boatPhysics);
   }
 
   private publishMetrics(): void {
@@ -318,6 +365,7 @@ export class EngineApp {
         yawDeg: yawPitch.yawDeg,
         pitchDeg: yawPitch.pitchDeg
       },
+      boat: this.boatPhysics.getMetrics(this.originOffsetMeters),
       originOffsetMeters: { ...this.originOffsetMeters },
       status: this.status,
       error: this.error

@@ -88,6 +88,18 @@ export type CameraDebugState = {
   pitchDeg: number;
 };
 
+export type BoatDebugState = {
+  position: { x: number; y: number; z: number };
+  speedMs: number;
+  headingDeg: number;
+  pitchDeg: number;
+  rollDeg: number;
+  throttle: number;
+  rudder: number;
+  capsized: boolean;
+  waterHeightM: number | null;
+};
+
 export type EngineMetrics = {
   backend: "webgpu";
   fps: number;
@@ -99,6 +111,7 @@ export type EngineMetrics = {
   seaLevelAtCameraM: number | null;
   worldTimeHours: number;
   camera: CameraDebugState;
+  boat: BoatDebugState | null;
   originOffsetMeters: { x: number; z: number };
   status: "booting" | "running" | "error";
   error: string | null;

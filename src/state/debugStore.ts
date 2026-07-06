@@ -41,6 +41,7 @@ export const DEFAULT_ENGINE_METRICS: EngineMetrics = {
   seaLevelAtCameraM: null,
   worldTimeHours: DEFAULT_DEBUG_SETTINGS.worldTimeHours,
   camera: { x: 0, y: 14, z: 32, yawDeg: 0, pitchDeg: -12 },
+  boat: null,
   originOffsetMeters: { x: 0, z: 0 },
   status: "booting",
   error: null

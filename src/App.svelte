@@ -36,12 +36,16 @@
   function updateSettings(next: DebugSettings) {
     debugSettings.set(next);
   }
+
+  function resetBoat() {
+    engine?.resetBoat();
+  }
 </script>
 
 <main class="relative h-full w-full overflow-hidden bg-black">
   <canvas bind:this={canvas} class="absolute inset-0 h-full w-full"></canvas>
 
   <div class="pointer-events-none absolute left-3 top-3 z-10">
-    <DebugPanel settings={$debugSettings} metrics={$engineMetrics} onChange={updateSettings} />
+    <DebugPanel settings={$debugSettings} metrics={$engineMetrics} onChange={updateSettings} onResetBoat={resetBoat} />
   </div>
 </main>

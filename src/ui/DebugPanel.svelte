@@ -14,9 +14,10 @@
     settings: DebugSettings;
     metrics: EngineMetrics;
     onChange: (settings: DebugSettings) => void;
+    onResetBoat: () => void;
   };
 
-  let { settings, metrics, onChange }: Props = $props();
+  let { settings, metrics, onChange, onResetBoat }: Props = $props();
   let showAdvanced = $state(false);
 
   const weatherOptions: Array<{ value: WeatherPresetName; label: string }> = [
@@ -112,6 +113,29 @@
     { label: "Yaw", value: `${metrics.camera.yawDeg.toFixed(0)} deg` },
     { label: "Pitch", value: `${metrics.camera.pitchDeg.toFixed(0)} deg` }
   ]);
+
+  const boatCards = $derived(
+    metrics.boat === null
+      ? [{ label: "Boat", value: "n/a" }]
+      : [
+          { label: "Boat Speed", value: `${metrics.boat.speedMs.toFixed(1)} m/s` },
+          { label: "Throttle", value: metrics.boat.throttle.toFixed(2) },
+          { label: "Rudder", value: metrics.boat.rudder.toFixed(2) },
+          { label: "Heading", value: `${metrics.boat.headingDeg.toFixed(0)} deg` },
+          { label: "Pitch", value: `${metrics.boat.pitchDeg.toFixed(1)} deg` },
+          { label: "Roll", value: `${metrics.boat.rollDeg.toFixed(1)} deg` },
+          { label: "Capsized", value: metrics.boat.capsized ? "yes" : "no" },
+          {
+            label: "Boat Water",
+            value: metrics.boat.waterHeightM === null ? "n/a" : `${metrics.boat.waterHeightM.toFixed(2)} m`
+          },
+          {
+            label: "Boat XZ",
+            value: `${metrics.boat.position.x.toFixed(1)}, ${metrics.boat.position.z.toFixed(1)}`
+          },
+          { label: "Boat Y", value: metrics.boat.position.y.toFixed(2) }
+        ]
+  );
 
   function checked(event: Event): boolean {
     return (event.currentTarget as HTMLInputElement).checked;
@@ -299,8 +323,29 @@
     {/each}
   </section>
 
+  <section class="mt-3 rounded border border-orange-300/25 bg-orange-950/20 p-2">
+    <div class="mb-2 flex items-center justify-between gap-2">
+      <h2 class="text-[11px] font-semibold uppercase tracking-normal text-orange-200">Boat</h2>
+      <button
+        class="rounded border border-orange-200/20 bg-orange-200/10 px-2 py-1 text-[10px] uppercase text-orange-100 hover:bg-orange-200/20"
+        type="button"
+        onclick={onResetBoat}
+      >
+        Reset
+      </button>
+    </div>
+    <section class="grid grid-cols-2 gap-2">
+      {#each boatCards as metric}
+        <div class="rounded border border-white/10 bg-white/[0.045] p-2">
+          <div class="text-[10px] uppercase text-slate-500">{metric.label}</div>
+          <div class="mt-1 truncate font-mono text-[12px] text-slate-100">{metric.value}</div>
+        </div>
+      {/each}
+    </section>
+  </section>
+
   <p class="mt-3 text-[11px] leading-snug text-slate-400">
-    Click canvas for pointer lock. WASD move, Space/C vertical, Shift boost, Esc releases.
+    Click canvas for pointer lock. WASD move, Space/C vertical, Shift boost, Esc releases. Boat: I/K throttle, J/L rudder.
   </p>
 </aside>
 
