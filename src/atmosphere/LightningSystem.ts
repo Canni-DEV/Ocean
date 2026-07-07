@@ -43,11 +43,13 @@ export class LightningSystem {
       bolt.frustumCulled = false;
       bolt.renderOrder = 10001; // drawn after the cloud composite
       bolt.visible = false;
+      bolt.userData.depthPass = "exclude";
       scene.add(bolt);
 
       // Persistent light (intensity 0 when idle) avoids pipeline rebuilds
       const light = new THREE.PointLight(BOLT_COLOR, 0, 0, 2);
       light.name = `Lightning light ${i}`;
+      light.userData.depthPass = "exclude";
       scene.add(light);
 
       this.strikes.push({

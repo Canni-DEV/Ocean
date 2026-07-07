@@ -10,7 +10,11 @@ export type AtmosphereDebugMode =
   | "erosion"
   | "densitySlice"
   | "historyWeight"
-  | "seamGrid";
+  | "seamGrid"
+  | "sceneDepth"
+  | "cloudRayEnd"
+  | "cloudFirstHit"
+  | "cloudOcclusionMask";
 
 export type DebugRenderMode =
   | "final"
@@ -108,6 +112,7 @@ export type EngineMetrics = {
   gpuMs: number | null;
   oceanComputeMs: number | null;
   cloudComputeMs: number | null;
+  depthPrepassMs: number | null;
   seaLevelAtCameraM: number | null;
   worldTimeHours: number;
   camera: CameraDebugState;

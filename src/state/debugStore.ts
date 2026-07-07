@@ -39,6 +39,7 @@ export const DEFAULT_ENGINE_METRICS: EngineMetrics = {
   gpuMs: null,
   oceanComputeMs: null,
   cloudComputeMs: null,
+  depthPrepassMs: null,
   seaLevelAtCameraM: null,
   worldTimeHours: DEFAULT_DEBUG_SETTINGS.worldTimeHours,
   camera: { x: 0, y: 14, z: 32, yawDeg: 0, pitchDeg: -12 },

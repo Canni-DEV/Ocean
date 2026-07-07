@@ -176,6 +176,7 @@ export class BoatPlaceholder {
     marker.name = "Boat spotlight red marker";
     marker.position.copy(lightInnerPosition);
     marker.renderOrder = 10002;
+    marker.userData.depthPass = "exclude";
 
     lightMount.add(this.spotlightInner, this.spotlightInnerTarget);
     lightMount.add(this.spotlight, this.spotlightTarget);

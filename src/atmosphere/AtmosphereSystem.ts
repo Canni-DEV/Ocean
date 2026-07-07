@@ -5,7 +5,7 @@ import type { DebugSettings, EnvironmentState, QualityTier, WeatherState } from 
 import { CloudNoiseTextures } from "./clouds/CloudNoiseTextures";
 import { WeatherMap, WEATHER_DOMAIN_METERS } from "./clouds/WeatherMap";
 import { CloudShadowMap } from "./clouds/CloudShadowMap";
-import { VolumetricCloudPass, CLOUD_QUALITY } from "./clouds/VolumetricCloudPass";
+import { VolumetricCloudPass, CLOUD_QUALITY, type SceneDepthInput } from "./clouds/VolumetricCloudPass";
 import { LightningSystem } from "./LightningSystem";
 import { directLightMask, twilightFactor } from "./celestialMask";
 
@@ -76,6 +76,7 @@ export class AtmosphereSystem {
   private showSky = true;
   private showRain = true;
   private showClouds = true;
+  private cloudsReadyForRender = false;
   private lastCloudMs = 0;
   private canvasWidth = 2;
   private canvasHeight = 2;
@@ -87,6 +88,7 @@ export class AtmosphereSystem {
     this.sky.scale.setScalar(30000);
     this.sky.name = "Physically based scattering sky";
     this.sky.frustumCulled = false;
+    this.sky.userData.depthPass = "exclude";
     (this.sky.material as any).fog = false;
 
     this.moonMaterial = new THREE.MeshBasicMaterial({
@@ -99,6 +101,7 @@ export class AtmosphereSystem {
     this.moonDisc = new THREE.Mesh(new THREE.CircleGeometry(58, 48), this.moonMaterial);
     this.moonDisc.name = "Visible moon disc";
     this.moonDisc.frustumCulled = false;
+    this.moonDisc.userData.depthPass = "exclude";
 
     this.starMaterial = new THREE.PointsMaterial({
       color: 0xe7efff,
@@ -112,6 +115,7 @@ export class AtmosphereSystem {
     this.stars = new THREE.Points(this.createStars(), this.starMaterial);
     this.stars.name = "Deterministic bright star field";
     this.stars.frustumCulled = false;
+    this.stars.userData.depthPass = "exclude";
 
     this.rainMaterial = new THREE.PointsMaterial({
       color: 0xaed7ff,
@@ -123,6 +127,7 @@ export class AtmosphereSystem {
     this.rain = new THREE.Points(this.createRain(), this.rainMaterial);
     this.rain.name = "Camera-centered rain particles";
     this.rain.frustumCulled = false;
+    this.rain.userData.depthPass = "exclude";
     // Rain falls below the cloud deck: draw it after the cloud composite so
     // heavy overcast does not attenuate nearby drops.
     this.rain.renderOrder = 10001;
@@ -283,8 +288,8 @@ export class AtmosphereSystem {
         fogDensity: environment.fogDensity
       });
       this.cloudPass.updateLightning(this.lightning.getCloudLights());
-      this.cloudPass.render(options.renderer, options.camera, options.originOffsetMeters, this.weatherMap);
     }
+    this.cloudsReadyForRender = cloudsEnabled;
 
     // Lights — direct contribution fades below the horizon via elevation masks
     this.sunLight.position.copy(sun).multiplyScalar(1200);
@@ -334,6 +339,19 @@ export class AtmosphereSystem {
 
     // Lightning flash also lifts the exposure briefly
     return { ...environment, exposure: environment.exposure + flash * 0.14 };
+  }
+
+  renderClouds(
+    renderer: THREE.WebGPURenderer,
+    camera: THREE.PerspectiveCamera,
+    originOffsetMeters: { x: number; z: number },
+    sceneDepth: SceneDepthInput | null
+  ): void {
+    const start = performance.now();
+    if (this.cloudsReadyForRender) {
+      this.cloudPass.render(renderer, camera, originOffsetMeters, this.weatherMap, sceneDepth);
+    }
+    this.lastCloudMs += performance.now() - start;
   }
 
   dispose(): void {

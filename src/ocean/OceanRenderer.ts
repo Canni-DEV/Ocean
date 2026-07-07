@@ -149,6 +149,10 @@ export class OceanRenderer {
     this.mesh = new THREE.Mesh(this.geometry, this.material);
     this.mesh.name = "FFT spectral ocean surface";
     this.mesh.frustumCulled = false;
+    // Cloud rays already clamp analytically against the sea plane. Feeding the
+    // ocean mesh into the scene-depth cloud mask turns the water surface into a
+    // large screen-space cloud cutter and creates horizontal half-frame gaps.
+    this.mesh.userData.depthPass = "exclude";
     // Receives the sun light's custom cloud-shadow node (projected cloud map)
     this.mesh.receiveShadow = true;
     options.scene.add(this.mesh);

@@ -53,7 +53,11 @@
     { value: "erosion", label: "Erosion" },
     { value: "densitySlice", label: "Density Slice" },
     { value: "historyWeight", label: "History Weight" },
-    { value: "seamGrid", label: "Seam Grid" }
+    { value: "seamGrid", label: "Seam Grid" },
+    { value: "sceneDepth", label: "Scene Depth" },
+    { value: "cloudRayEnd", label: "Cloud Ray End" },
+    { value: "cloudFirstHit", label: "Cloud First Hit" },
+    { value: "cloudOcclusionMask", label: "Cloud Occlusion" }
   ];
 
   const beaufortLabels = [
@@ -94,6 +98,10 @@
     {
       label: "Clouds Upd",
       value: metrics.cloudComputeMs === null ? "n/a" : `${metrics.cloudComputeMs.toFixed(1)} ms`
+    },
+    {
+      label: "Depth Pre",
+      value: metrics.depthPrepassMs === null ? "n/a" : `${metrics.depthPrepassMs.toFixed(1)} ms`
     },
     {
       label: "Sea Level",
@@ -150,7 +158,7 @@
   }
 </script>
 
-<aside class="pointer-events-auto w-[360px] max-w-[calc(100vw-24px)] rounded border border-white/15 bg-slate-950/82 p-3 text-[12px] leading-tight text-slate-100 shadow-2xl backdrop-blur">
+<aside class="pointer-events-auto max-h-[calc(100vh-24px)] w-[360px] max-w-[calc(100vw-24px)] overflow-y-auto rounded border border-white/15 bg-slate-950/82 p-3 text-[12px] leading-tight text-slate-100 shadow-2xl backdrop-blur">
   <div class="mb-3 flex items-start justify-between gap-3">
     <div>
       <h1 class="text-sm font-semibold tracking-normal">Ocean Prototype</h1>

@@ -10,6 +10,7 @@ import { cloneWeather, easeWeatherProgress, lerpWeather, WEATHER_PRESETS } from 
 import { buildSeaState, lerpSeaState, type SeaStateParams } from "../state/seaState";
 import { FrameStats } from "./FrameStats";
 import { InputController } from "./InputController";
+import { SceneDepthPass } from "./SceneDepthPass";
 import type { DebugSettings, EngineMetrics, QualityTier, WeatherPresetName, WeatherState } from "./types";
 
 type EngineAppOptions = {
@@ -29,6 +30,7 @@ export class EngineApp {
   private readonly boatController = new BoatController();
   private readonly boatPhysics = new BoatPhysics();
   private readonly boatPlaceholder = new BoatPlaceholder();
+  private readonly sceneDepthPass = new SceneDepthPass();
   private readonly stats = new FrameStats();
 
   private renderer: THREE.WebGPURenderer | null = null;
@@ -53,6 +55,7 @@ export class EngineApp {
   private originOffsetMeters = { x: 0, z: 0 };
   private oceanComputeMs: number | null = null;
   private cloudComputeMs: number | null = null;
+  private depthPrepassMs: number | null = null;
   private simulationTimeSeconds = 0;
   private status: EngineMetrics["status"] = "booting";
   private error: string | null = null;
@@ -109,6 +112,7 @@ export class EngineApp {
     this.ocean?.dispose();
     this.simulation?.dispose();
     this.atmosphere?.dispose();
+    this.sceneDepthPass.dispose();
     this.renderer?.dispose();
   }
 
@@ -195,6 +199,7 @@ export class EngineApp {
     this.input.resize(width, height);
     const pixelRatio = this.renderer.getPixelRatio();
     this.atmosphere?.resize(width * pixelRatio, height * pixelRatio);
+    this.sceneDepthPass.setSize(width * pixelRatio, height * pixelRatio);
   };
 
   private loop = (): void => {
@@ -231,7 +236,6 @@ export class EngineApp {
       originOffsetMeters: this.originOffsetMeters,
       timeSeconds: this.simulationTimeSeconds
     });
-    this.cloudComputeMs = this.atmosphere.cloudComputeMs;
 
     this.renderer.toneMappingExposure = BASE_TONE_MAPPING_EXPOSURE * environment.exposure;
 
@@ -250,6 +254,17 @@ export class EngineApp {
       this.originOffsetMeters,
       this.simulationTimeSeconds
     );
+
+    const depthStart = performance.now();
+    this.sceneDepthPass.capture(this.renderer, this.scene, this.input.camera);
+    this.depthPrepassMs = performance.now() - depthStart;
+
+    this.atmosphere.renderClouds(this.renderer, this.input.camera, this.originOffsetMeters, {
+      texture: this.sceneDepthPass.texture,
+      width: this.canvas.width,
+      height: this.canvas.height
+    });
+    this.cloudComputeMs = this.atmosphere.cloudComputeMs;
 
     this.physics?.update(
       this.renderer,
@@ -358,6 +373,7 @@ export class EngineApp {
       gpuMs: null,
       oceanComputeMs: this.oceanComputeMs,
       cloudComputeMs: this.cloudComputeMs,
+      depthPrepassMs: this.depthPrepassMs,
       seaLevelAtCameraM: seaLevel ?? null,
       worldTimeHours: this.worldTimeHours,
       camera: {
