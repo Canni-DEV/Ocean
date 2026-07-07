@@ -9,6 +9,11 @@ export class BoatPlaceholder {
   private readonly config: BoatConfig;
   private readonly placeholderGroup = new THREE.Group();
   private readonly modelGroup = new THREE.Group();
+  private readonly lightGroup = new THREE.Group();
+  private readonly spotlight = new THREE.SpotLight(0xfff0d0, 600, 300, 0.9, 0.48, 1.35);
+  private readonly spotlightInner = new THREE.SpotLight(0xfff0d0, 200, 100, 0.75, 0.48, 1.35);
+  private readonly spotlightTarget = new THREE.Object3D();
+  private readonly spotlightInnerTarget = new THREE.Object3D();
   private readonly hullMaterial = new THREE.MeshStandardMaterial({
     color: 0xd95f32,
     roughness: 0.62,
@@ -24,6 +29,10 @@ export class BoatPlaceholder {
     roughness: 0.55,
     metalness: 0.02
   });
+  private readonly lightMarkerMaterial = new THREE.MeshBasicMaterial({
+    color: 0xff0000,
+    depthTest: false
+  });
   private modelReady = false;
   private useModel = false;
 
@@ -32,9 +41,11 @@ export class BoatPlaceholder {
     this.group.name = "Player boat placeholder";
     this.placeholderGroup.name = "Boat debug placeholder";
     this.modelGroup.name = "Boat GLB model";
+    this.lightGroup.name = "Boat model spotlight";
     this.modelGroup.visible = false;
     this.placeholderGroup.add(this.createHull(), this.createDeck(), this.createCabin(), this.createBowMarker());
-    this.group.add(this.placeholderGroup, this.modelGroup);
+    this.lightGroup.add(this.createSpotlight());
+    this.group.add(this.placeholderGroup, this.modelGroup, this.lightGroup);
     void this.loadModel();
   }
 
@@ -115,6 +126,60 @@ export class BoatPlaceholder {
   private syncVisibility(): void {
     this.modelGroup.visible = this.useModel && this.modelReady;
     this.placeholderGroup.visible = !this.modelGroup.visible;
+    this.lightGroup.visible = this.modelGroup.visible;
+  }
+
+  private createSpotlight(): THREE.Group {
+    const lightMount = new THREE.Group();
+
+    const lightPosition = new THREE.Vector3(
+      -this.config.beamMeters * 0.02,
+      this.config.hullHeightMeters * 2.8,
+      -this.config.lengthMeters * 0.31
+    );
+
+     const lightInnerPosition = new THREE.Vector3(
+      -this.config.beamMeters * 0.02,
+      this.config.hullHeightMeters * 1.5,
+      -this.config.lengthMeters *  -0.07
+    );
+
+    const targetPosition = new THREE.Vector3(
+      -this.config.beamMeters * 0.02,
+      this.config.hullHeightMeters * 0.3,
+      -this.config.lengthMeters * 2.5
+    );
+
+     const targetPositionBoat = new THREE.Vector3(
+      -this.config.beamMeters * 0.02,
+      this.config.hullHeightMeters * 0.3,
+      -this.config.lengthMeters * 0.15  
+    );
+
+    this.spotlight.name = "Boat forward spotlight";
+    this.spotlight.position.copy(lightPosition);
+    this.spotlight.target = this.spotlightTarget;
+    this.spotlight.castShadow = false;
+
+    this.spotlightTarget.name = "Boat forward spotlight target";
+    this.spotlightTarget.position.copy(targetPosition);
+
+    this.spotlightInner.name = "Boat forward1 spotlight";
+    this.spotlightInner.position.copy(lightInnerPosition);
+    this.spotlightInner.target = this.spotlightInnerTarget;
+    this.spotlightInner.castShadow = true;
+
+    this.spotlightInnerTarget.name = "Boat forward1 spotlight target";
+    this.spotlightInnerTarget.position.copy(targetPositionBoat);
+
+    const marker = new THREE.Mesh(new THREE.SphereGeometry(0.14, 16, 8), this.lightMarkerMaterial);
+    marker.name = "Boat spotlight red marker";
+    marker.position.copy(lightInnerPosition);
+    marker.renderOrder = 10002;
+
+    lightMount.add(this.spotlightInner, this.spotlightInnerTarget);
+    lightMount.add(this.spotlight, this.spotlightTarget);
+    return lightMount;
   }
 
   private createHull(): THREE.Mesh {
