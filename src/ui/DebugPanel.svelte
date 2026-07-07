@@ -326,13 +326,19 @@
   <section class="mt-3 rounded border border-orange-300/25 bg-orange-950/20 p-2">
     <div class="mb-2 flex items-center justify-between gap-2">
       <h2 class="text-[11px] font-semibold uppercase tracking-normal text-orange-200">Boat</h2>
-      <button
-        class="rounded border border-orange-200/20 bg-orange-200/10 px-2 py-1 text-[10px] uppercase text-orange-100 hover:bg-orange-200/20"
-        type="button"
-        onclick={onResetBoat}
-      >
-        Reset
-      </button>
+      <div class="flex items-center gap-2">
+        <label class="!mb-0 flex min-h-6 items-center gap-1 rounded border border-orange-200/20 bg-orange-200/10 px-2 py-1">
+          <span class="!mb-0 !text-[10px] !text-orange-100">Model</span>
+          <input type="checkbox" checked={settings.boatUseModel} onchange={(event) => patch({ boatUseModel: checked(event) })} />
+        </label>
+        <button
+          class="rounded border border-orange-200/20 bg-orange-200/10 px-2 py-1 text-[10px] uppercase text-orange-100 hover:bg-orange-200/20"
+          type="button"
+          onclick={onResetBoat}
+        >
+          Reset
+        </button>
+      </div>
     </div>
     <section class="grid grid-cols-2 gap-2">
       {#each boatCards as metric}

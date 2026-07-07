@@ -27,7 +27,8 @@ export const DEFAULT_DEBUG_SETTINGS: DebugSettings = {
   waterTurbidity: 0.22,
   cloudCoverageBias: 0,
   cloudDensityBias: 0,
-  exposureBias: 0
+  exposureBias: 0,
+  boatUseModel: false
 };
 
 export const DEFAULT_ENGINE_METRICS: EngineMetrics = {

@@ -147,4 +147,5 @@ export type DebugSettings = {
   cloudCoverageBias: number;
   cloudDensityBias: number;
   exposureBias: number;
+  boatUseModel: boolean;
 };

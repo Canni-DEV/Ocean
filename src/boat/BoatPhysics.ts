@@ -54,7 +54,7 @@ const MAX_STEP_SECONDS = 1 / 120;
 export const DEFAULT_BOAT_CONFIG: BoatConfig = {
   lengthMeters: 8,
   beamMeters: 2.6,
-  hullHeightMeters: 1,
+  hullHeightMeters: 1.6,
   draftMeters: 0.45,
   massKg: 2500,
   maxEngineForceN: 5600,

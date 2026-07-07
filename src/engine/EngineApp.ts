@@ -96,6 +96,7 @@ export class EngineApp {
 
     this.ocean?.applySettings(settings);
     this.atmosphere?.applySettings(settings);
+    this.boatPlaceholder.setUseModel(settings.boatUseModel);
   }
 
   dispose(): void {
@@ -140,6 +141,7 @@ export class EngineApp {
       this.createOcean(this.settings.quality);
       this.atmosphere.applySettings(this.settings);
       this.ocean?.applySettings(this.settings);
+      this.boatPlaceholder.setUseModel(this.settings.boatUseModel);
       this.scene.add(this.boatPlaceholder.group);
       this.resetBoat();
 
