@@ -15,6 +15,9 @@ export type BoatConfig = {
   windForceCoefficient: number;
   waterDragCoefficient: number;
   verticalDampingCoefficient: number;
+  buoyancyMultiplier: number;
+  maxSubmergedRatio: number;
+  waveVelocityInfluence: number;
   linearDamping: number;
   angularDamping: number;
   capsizeUpDotThreshold: number;
@@ -58,13 +61,16 @@ export const DEFAULT_BOAT_CONFIG: BoatConfig = {
   maxReverseForceN: 2600,
   rudderForceN: 7600,
   windForceCoefficient: 18,
-  waterDragCoefficient: 880,
-  verticalDampingCoefficient: 1900,
+  waterDragCoefficient: 640,
+  verticalDampingCoefficient: 0.01,
+  buoyancyMultiplier: 2.75,
+  maxSubmergedRatio: 1.75,
+  waveVelocityInfluence: 0.85,
   linearDamping: 0.22,
-  angularDamping: 1.35,
+  angularDamping: 1.55,
   capsizeUpDotThreshold: 0.16,
-  maxForceN: 90000,
-  maxTorqueNm: 180000,
+  maxForceN: 140000,
+  maxTorqueNm: 240000,
   maxLinearSpeedMs: 32,
   maxAngularSpeedRad: 3.5,
   maxSimulationDistanceMeters: 10000
@@ -85,6 +91,8 @@ export class BoatPhysics {
   private readonly inertiaLocal: THREE.Vector3;
   private readonly inverseInertiaLocal: THREE.Vector3;
   private readonly buoyancyPoints: THREE.Vector3[];
+  private readonly previousWaterHeights: number[];
+  private readonly waterVerticalVelocities: number[];
   private readonly forceAccumulator = new THREE.Vector3();
   private readonly torqueAccumulator = new THREE.Vector3();
   private lastControl: BoatControlState = { throttle: 0, rudder: 0 };
@@ -104,13 +112,15 @@ export class BoatPhysics {
       1 / this.inertiaLocal.z
     );
     this.buoyancyPoints = this.createBuoyancyPoints();
+    this.previousWaterHeights = this.buoyancyPoints.map(() => Number.NaN);
+    this.waterVerticalVelocities = this.buoyancyPoints.map(() => 0);
   }
 
   resetToWorldOrigin(originOffsetMeters: { x: number; z: number }, waterHeight: number | null): void {
     const safeWaterHeight = isFiniteNumber(waterHeight) ? waterHeight : 0;
     this.position.set(
       -originOffsetMeters.x,
-      safeWaterHeight + this.config.draftMeters * 0.45,
+      safeWaterHeight + this.config.draftMeters * 0.75,
       -originOffsetMeters.z
     );
     this.quaternion.identity();
@@ -119,6 +129,8 @@ export class BoatPhysics {
     this.capsized = false;
     this.waterHeightAtCenter = safeWaterHeight;
     this.lastControl = { throttle: 0, rudder: 0 };
+    this.previousWaterHeights.fill(Number.NaN);
+    this.waterVerticalVelocities.fill(0);
   }
 
   applyOriginShift(shiftX: number, shiftZ: number): void {
@@ -147,9 +159,11 @@ export class BoatPhysics {
     this.waterHeightAtCenter = this.sampleHeight(options.sampler, centerWorldX, centerWorldZ);
 
     let remaining = Math.min(options.deltaSeconds, 0.1);
+    let shouldRefreshWaveVelocities = true;
     while (remaining > 0) {
       const step = Math.min(MAX_STEP_SECONDS, remaining);
-      this.integrateStep(step, options);
+      this.integrateStep(step, options, shouldRefreshWaveVelocities);
+      shouldRefreshWaveVelocities = false;
       if (!this.hasFiniteState() || this.isOutOfSimulationBounds(options.originOffsetMeters)) {
         this.resetToWorldOrigin(options.originOffsetMeters, this.waterHeightAtCenter);
         return;
@@ -180,13 +194,22 @@ export class BoatPhysics {
     };
   }
 
-  private integrateStep(deltaSeconds: number, options: BoatUpdateOptions): void {
+  private integrateStep(
+    deltaSeconds: number,
+    options: BoatUpdateOptions,
+    shouldRefreshWaveVelocities: boolean
+  ): void {
     if (!isFiniteNumber(deltaSeconds) || deltaSeconds <= 0) return;
 
     this.forceAccumulator.set(0, -this.config.massKg * GRAVITY_MS2, 0);
     this.torqueAccumulator.set(0, 0, 0);
 
-    this.applyBuoyancy(options.sampler, options.originOffsetMeters);
+    this.applyBuoyancy(
+      options.sampler,
+      options.originOffsetMeters,
+      options.deltaSeconds,
+      shouldRefreshWaveVelocities
+    );
     this.applyEngineAndRudder(options.control);
     this.applyWind(options.weather);
     this.applyGlobalDamping();
@@ -214,14 +237,17 @@ export class BoatPhysics {
 
   private applyBuoyancy(
     sampler: OceanPhysicsSampler | null,
-    originOffsetMeters: { x: number; z: number }
+    originOffsetMeters: { x: number; z: number },
+    frameDeltaSeconds: number,
+    shouldRefreshWaveVelocities: boolean
   ): void {
     if (!sampler) return;
 
     const pointMaxBuoyancy =
-      (this.config.massKg * GRAVITY_MS2 * 1.85) / this.buoyancyPoints.length;
+      (this.config.massKg * GRAVITY_MS2 * this.config.buoyancyMultiplier) / this.buoyancyPoints.length;
 
-    for (const localPoint of this.buoyancyPoints) {
+    for (let index = 0; index < this.buoyancyPoints.length; index += 1) {
+      const localPoint = this.buoyancyPoints[index];
       const offset = localPoint.clone().applyQuaternion(this.quaternion);
       const pointWorld = this.position.clone().add(offset);
       const sampleX = pointWorld.x + originOffsetMeters.x;
@@ -230,13 +256,20 @@ export class BoatPhysics {
 
       const waterHeight = this.sampleHeight(sampler, sampleX, sampleZ);
       if (waterHeight === null) continue;
+      const waterVerticalVelocity = shouldRefreshWaveVelocities
+        ? this.updateWaterVerticalVelocity(index, waterHeight, frameDeltaSeconds)
+        : this.waterVerticalVelocities[index];
 
       const normalSample = sampler.getNormalAt(sampleX, sampleZ);
       const normal = this.buildSafeNormal(normalSample);
       const submergedMeters = waterHeight - pointWorld.y;
       if (!isFiniteNumber(submergedMeters) || submergedMeters <= 0) continue;
 
-      const submerged = THREE.MathUtils.clamp(submergedMeters / this.config.draftMeters, 0, 1.35);
+      const submerged = THREE.MathUtils.clamp(
+        submergedMeters / this.config.draftMeters,
+        0,
+        this.config.maxSubmergedRatio
+      );
       if (!isFiniteNumber(submerged)) continue;
 
       this.applyForce({
@@ -247,14 +280,19 @@ export class BoatPhysics {
       const pointVelocity = this.velocity.clone().add(this.angularVelocity.clone().cross(offset));
       if (!isFiniteVector(pointVelocity)) continue;
 
-      const verticalVelocity = normal
+      const relativeNormalVelocity = THREE.MathUtils.clamp(
+        pointVelocity.dot(normal) - waterVerticalVelocity * this.config.waveVelocityInfluence,
+        -22,
+        22
+      );
+      const verticalDrag = normal
         .clone()
-        .multiplyScalar(THREE.MathUtils.clamp(pointVelocity.dot(normal), -18, 18));
+        .multiplyScalar(-relativeNormalVelocity * this.config.verticalDampingCoefficient * submerged);
       const drag = pointVelocity
         .clone()
         .clampLength(0, 24)
         .multiplyScalar(-this.config.waterDragCoefficient * submerged)
-        .add(verticalVelocity.multiplyScalar(-this.config.verticalDampingCoefficient * submerged));
+        .add(verticalDrag);
       this.applyForce({ force: drag, worldPointOffset: offset });
     }
   }
@@ -367,6 +405,18 @@ export class BoatPhysics {
 
     const vector = new THREE.Vector3(normal.x, normal.y, normal.z);
     return vector.lengthSq() > 1e-8 ? vector.normalize() : new THREE.Vector3(0, 1, 0);
+  }
+
+  private updateWaterVerticalVelocity(index: number, waterHeight: number, deltaSeconds: number): number {
+    const previous = this.previousWaterHeights[index];
+    const safeDelta = Math.max(1 / 120, Math.min(0.1, deltaSeconds));
+    const velocity = isFiniteNumber(previous)
+      ? THREE.MathUtils.clamp((waterHeight - previous) / safeDelta, -8, 8)
+      : 0;
+
+    this.previousWaterHeights[index] = waterHeight;
+    this.waterVerticalVelocities[index] = velocity;
+    return velocity;
   }
 
   private hasFiniteState(): boolean {
