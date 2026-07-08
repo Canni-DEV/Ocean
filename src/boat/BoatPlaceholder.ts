@@ -11,9 +11,11 @@ export class BoatPlaceholder {
   private readonly modelGroup = new THREE.Group();
   private readonly lightGroup = new THREE.Group();
   private readonly spotlight = new THREE.SpotLight(0xfff0d0, 600, 300, 0.9, 0.48, 1.35);
-  private readonly spotlightInner = new THREE.SpotLight(0xfff0d0, 200, 100, 0.75, 0.48, 1.35);
+  private readonly spotlightInner = new THREE.SpotLight(0xfff0d0, 100, 100, 0.75, 0.48, 1.35);
+  private readonly spotlightCabin = new THREE.SpotLight(0xfff0d0, 100, 300, 2.5, 0.48, 1.35);
   private readonly spotlightTarget = new THREE.Object3D();
   private readonly spotlightInnerTarget = new THREE.Object3D();
+  private readonly spotlightCabinTarget = new THREE.Object3D();
   private readonly hullMaterial = new THREE.MeshStandardMaterial({
     color: 0xd95f32,
     roughness: 0.62,
@@ -29,10 +31,10 @@ export class BoatPlaceholder {
     roughness: 0.55,
     metalness: 0.02
   });
-  private readonly lightMarkerMaterial = new THREE.MeshBasicMaterial({
-    color: 0xff0000,
-    depthTest: false
-  });
+  // private readonly lightMarkerMaterial = new THREE.MeshBasicMaterial({
+  //   color: 0xff0000,
+  //   depthTest: false
+  // });
   private modelReady = false;
   private useModel = false;
 
@@ -131,7 +133,7 @@ export class BoatPlaceholder {
 
   private createSpotlight(): THREE.Group {
     const lightMount = new THREE.Group();
-
+    //Positions
     const lightPosition = new THREE.Vector3(
       -this.config.beamMeters * 0.02,
       this.config.hullHeightMeters * 2.8,
@@ -142,6 +144,12 @@ export class BoatPlaceholder {
       -this.config.beamMeters * 0.02,
       this.config.hullHeightMeters * 1.5,
       -this.config.lengthMeters *  -0.07
+    );
+
+     const lightCabinPosition = new THREE.Vector3(
+      -this.config.beamMeters * 0.02,
+      this.config.hullHeightMeters * 1.25,
+      -this.config.lengthMeters *  -0.175
     );
 
     const targetPosition = new THREE.Vector3(
@@ -156,6 +164,13 @@ export class BoatPlaceholder {
       -this.config.lengthMeters * 0.15  
     );
 
+    const targetPositionCabin = new THREE.Vector3(
+      -this.config.beamMeters * 0.02,
+      this.config.hullHeightMeters * 0.3,
+      -this.config.lengthMeters * -0.2
+    );
+
+    //Spot
     this.spotlight.name = "Boat forward spotlight";
     this.spotlight.position.copy(lightPosition);
     this.spotlight.target = this.spotlightTarget;
@@ -164,6 +179,7 @@ export class BoatPlaceholder {
     this.spotlightTarget.name = "Boat forward spotlight target";
     this.spotlightTarget.position.copy(targetPosition);
 
+    //Inner
     this.spotlightInner.name = "Boat forward1 spotlight";
     this.spotlightInner.position.copy(lightInnerPosition);
     this.spotlightInner.target = this.spotlightInnerTarget;
@@ -172,12 +188,22 @@ export class BoatPlaceholder {
     this.spotlightInnerTarget.name = "Boat forward1 spotlight target";
     this.spotlightInnerTarget.position.copy(targetPositionBoat);
 
-    const marker = new THREE.Mesh(new THREE.SphereGeometry(0.14, 16, 8), this.lightMarkerMaterial);
-    marker.name = "Boat spotlight red marker";
-    marker.position.copy(lightInnerPosition);
-    marker.renderOrder = 10002;
-    marker.userData.depthPass = "exclude";
+    //Cabin
+    this.spotlightCabin.name = "Cabin forward1 spotlight";
+    this.spotlightCabin.position.copy(lightCabinPosition);
+    this.spotlightCabin.target = this.spotlightCabinTarget;
+    this.spotlightCabin.castShadow = false;
 
+    this.spotlightCabinTarget.name = "Cabin forward1 spotlight target";
+    this.spotlightCabinTarget.position.copy(targetPositionCabin);
+
+    // const marker = new THREE.Mesh(new THREE.SphereGeometry(0.14, 16, 8), this.lightMarkerMaterial);
+    // marker.name = "Boat spotlight red marker";
+    // marker.position.copy(lightCabinPosition);
+    // marker.renderOrder = 10002;
+    // marker.userData.depthPass = "exclude";
+
+    lightMount.add(this.spotlightCabin, this.spotlightCabinTarget);
     lightMount.add(this.spotlightInner, this.spotlightInnerTarget);
     lightMount.add(this.spotlight, this.spotlightTarget);
     return lightMount;
