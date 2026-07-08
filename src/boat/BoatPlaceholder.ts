@@ -4,6 +4,26 @@ import { MeshBVH } from "three-mesh-bvh";
 import boatModelUrl from "../../assets/fishing_boat.glb?url";
 import { DEFAULT_BOAT_CONFIG, type BoatConfig, type BoatPhysics } from "./BoatPhysics";
 
+/**
+ * Meshes del modelo GLB que se ocultan y se excluyen del collider para dejar
+ * un vano transitable. La puerta de la cabina (`pCube1.002_Material.001_0`) es
+ * un panel independiente colocado sobre un hueco ya recortado en la pared, y
+ * `Cube.025_glass_0` es la ventanita superior de esa puerta. Quitar ambas deja
+ * el vano libre para que el player entre a la cabina.
+ *
+ * Nota: GLTFLoader "sanitiza" `mesh.name` (elimina los puntos), por lo que el
+ * match se hace contra el nombre original preservado en `userData.name`.
+ */
+const REMOVED_MODEL_MESH_NAMES = new Set<string>([
+  "pCube1.002_Material.001_0",
+  "Cube.025_glass_0"
+]);
+
+function isRemovedModelMesh(object: THREE.Object3D): boolean {
+  const originalName = (object.userData?.name as string | undefined) ?? object.name;
+  return REMOVED_MODEL_MESH_NAMES.has(originalName);
+}
+
 export class BoatPlaceholder {
   readonly group = new THREE.Group();
 
@@ -123,6 +143,11 @@ export class BoatPlaceholder {
     model.traverse((object) => {
       const mesh = object as THREE.Mesh;
       if (!mesh.isMesh) return;
+      if (isRemovedModelMesh(mesh)) {
+        mesh.visible = false;
+        mesh.userData.excludeFromCollider = true;
+        return;
+      }
       mesh.castShadow = true;
       mesh.receiveShadow = true;
     });
@@ -332,6 +357,7 @@ function mergeMeshesToLocalGeometry(
   sourceRoot.traverse((object) => {
     const mesh = object as THREE.Mesh;
     if (!mesh.isMesh || !mesh.geometry) return;
+    if (mesh.userData.excludeFromCollider) return;
 
     const geometry = mesh.geometry.clone();
     const localMatrix = new THREE.Matrix4().multiplyMatrices(inverseSpace, mesh.matrixWorld);
