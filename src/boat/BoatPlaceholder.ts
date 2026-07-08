@@ -201,12 +201,6 @@ export class BoatPlaceholder {
       -this.config.lengthMeters * 0.31
     );
 
-     const lightInnerPosition = new THREE.Vector3(
-      -this.config.beamMeters * 0.02,
-      this.config.hullHeightMeters * 1.5,
-      -this.config.lengthMeters *  -0.07
-    );
-
      const lightCabinPosition = new THREE.Vector3(
       -this.config.beamMeters * 0.02,
       this.config.hullHeightMeters * 1.25,
