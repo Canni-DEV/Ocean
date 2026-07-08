@@ -5,6 +5,7 @@ import { BoatPhysics } from "../boat/BoatPhysics";
 import { BoatPlaceholder } from "../boat/BoatPlaceholder";
 import { OceanPhysicsSampler } from "../ocean/OceanPhysicsSampler";
 import { OceanRenderer } from "../ocean/OceanRenderer";
+import { FirstPersonController } from "../player/FirstPersonController";
 import { OceanSimulation, OCEAN_QUALITY } from "../ocean/simulation/OceanSimulation";
 import { cloneWeather, easeWeatherProgress, lerpWeather, WEATHER_PRESETS } from "../state/weather";
 import { buildSeaState, lerpSeaState, type SeaStateParams } from "../state/seaState";
@@ -30,6 +31,7 @@ export class EngineApp {
   private readonly boatController = new BoatController();
   private readonly boatPhysics = new BoatPhysics();
   private readonly boatPlaceholder = new BoatPlaceholder();
+  private readonly firstPerson: FirstPersonController;
   private readonly sceneDepthPass = new SceneDepthPass();
   private readonly stats = new FrameStats();
 
@@ -57,6 +59,7 @@ export class EngineApp {
   private cloudComputeMs: number | null = null;
   private depthPrepassMs: number | null = null;
   private simulationTimeSeconds = 0;
+  private firstPersonActive = false;
   private status: EngineMetrics["status"] = "booting";
   private error: string | null = null;
 
@@ -71,6 +74,7 @@ export class EngineApp {
     this.weatherTarget = cloneWeather(WEATHER_PRESETS[this.weatherPreset]);
     this.weatherCurrent = cloneWeather(WEATHER_PRESETS[this.weatherPreset]);
     this.input = new InputController(this.canvas);
+    this.firstPerson = new FirstPersonController(this.input.camera, this.canvas);
   }
 
   start(): void {
@@ -99,7 +103,8 @@ export class EngineApp {
 
     this.ocean?.applySettings(settings);
     this.atmosphere?.applySettings(settings);
-    this.boatPlaceholder.setUseModel(settings.boatUseModel);
+    this.boatPlaceholder.setUseModel(settings.boatUseModel || settings.firstPerson);
+    this.syncFirstPersonMode(settings.firstPerson);
   }
 
   dispose(): void {
@@ -107,6 +112,7 @@ export class EngineApp {
     this.disposed = true;
     cancelAnimationFrame(this.animationFrame);
     this.input.dispose();
+    this.firstPerson.dispose();
     this.boatController.dispose();
     this.boatPlaceholder.dispose();
     this.ocean?.dispose();
@@ -148,6 +154,7 @@ export class EngineApp {
       this.boatPlaceholder.setUseModel(this.settings.boatUseModel);
       this.scene.add(this.boatPlaceholder.group);
       this.resetBoat();
+      this.syncFirstPersonMode(this.settings.firstPerson);
 
       window.addEventListener("resize", this.resize);
       this.resize();
@@ -215,7 +222,15 @@ export class EngineApp {
     let boatControl: BoatControlState | null = null;
 
     if (!this.settings.paused) {
-      this.input.update(deltaSeconds);
+      if (this.firstPersonActive) {
+        const collider = this.boatPlaceholder.getColliderBVH();
+        if (collider) {
+          this.firstPerson.update(deltaSeconds, this.boatPlaceholder.group, collider);
+        }
+      } else {
+        this.input.update(deltaSeconds);
+      }
+
       boatControl = this.boatController.update(deltaSeconds);
       this.worldTimeHours = (this.worldTimeHours + (deltaSeconds * this.settings.timeScale) / 3600) % 24;
       this.updateWeather(deltaSeconds);
@@ -223,10 +238,22 @@ export class EngineApp {
       this.simulationTimeSeconds += deltaSeconds;
     }
 
+    if (this.settings.firstPerson && !this.firstPersonActive && this.boatPlaceholder.isColliderReady()) {
+      this.syncFirstPersonMode(true);
+    }
+
     const tunedWeather = this.applyDebugWeatherOverrides(this.weatherCurrent);
     if (!this.settings.paused && boatControl) {
       this.updateBoat(boatControl, tunedWeather, deltaSeconds);
     }
+
+    if (this.firstPersonActive) {
+      const collider = this.boatPlaceholder.getColliderBVH();
+      if (collider) {
+        this.firstPerson.update(0, this.boatPlaceholder.group, collider);
+      }
+    }
+
     const environment = this.atmosphere.update({
       renderer: this.renderer,
       camera: this.input.camera,
@@ -357,6 +384,45 @@ export class EngineApp {
     this.boatPlaceholder.syncFromPhysics(this.boatPhysics);
   }
 
+  private syncFirstPersonMode(requested: boolean): void {
+    if (requested && !this.boatPlaceholder.isColliderReady()) {
+      this.firstPersonActive = false;
+      this.firstPerson.setEnabled(false);
+      this.input.setEnabled(true);
+      return;
+    }
+
+    if (requested === this.firstPersonActive) return;
+
+    this.firstPersonActive = requested;
+    this.firstPerson.setEnabled(requested);
+    this.input.setEnabled(!requested);
+
+    if (requested) {
+      const collider = this.boatPlaceholder.getColliderBVH();
+      if (collider) {
+        this.firstPerson.spawnOnDeck(collider, this.boatPlaceholder.getDefaultSpawnLocalPosition());
+      }
+      return;
+    }
+
+    if (document.pointerLockElement === this.canvas) {
+      document.exitPointerLock();
+    }
+
+    const boatPosition = this.boatPhysics.position;
+    const yawPitch = this.firstPerson.getMetrics();
+    this.input.setViewOrientation(
+      THREE.MathUtils.degToRad(yawPitch.yawDeg),
+      THREE.MathUtils.degToRad(yawPitch.pitchDeg)
+    );
+    this.input.camera.position.set(
+      boatPosition.x,
+      boatPosition.y + 12,
+      boatPosition.z + 18
+    );
+  }
+
   private publishMetrics(): void {
     const camera = this.input.camera.position;
     const yawPitch = this.input.getYawPitchDeg();
@@ -384,6 +450,7 @@ export class EngineApp {
         pitchDeg: yawPitch.pitchDeg
       },
       boat: this.boatPhysics.getMetrics(this.originOffsetMeters),
+      firstPerson: this.firstPersonActive ? this.firstPerson.getMetrics() : null,
       originOffsetMeters: { ...this.originOffsetMeters },
       status: this.status,
       error: this.error

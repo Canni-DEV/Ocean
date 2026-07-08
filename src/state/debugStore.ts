@@ -28,7 +28,8 @@ export const DEFAULT_DEBUG_SETTINGS: DebugSettings = {
   cloudCoverageBias: 0,
   cloudDensityBias: 0,
   exposureBias: 0,
-  boatUseModel: false
+  boatUseModel: false,
+  firstPerson: false
 };
 
 export const DEFAULT_ENGINE_METRICS: EngineMetrics = {
@@ -44,6 +45,7 @@ export const DEFAULT_ENGINE_METRICS: EngineMetrics = {
   worldTimeHours: DEFAULT_DEBUG_SETTINGS.worldTimeHours,
   camera: { x: 0, y: 14, z: 32, yawDeg: 0, pitchDeg: -12 },
   boat: null,
+  firstPerson: null,
   originOffsetMeters: { x: 0, z: 0 },
   status: "booting",
   error: null

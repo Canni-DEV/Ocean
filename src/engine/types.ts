@@ -104,6 +104,15 @@ export type BoatDebugState = {
   waterHeightM: number | null;
 };
 
+export type FirstPersonDebugState = {
+  localX: number;
+  localY: number;
+  localZ: number;
+  yawDeg: number;
+  pitchDeg: number;
+  onGround: boolean;
+};
+
 export type EngineMetrics = {
   backend: "webgpu";
   fps: number;
@@ -117,6 +126,7 @@ export type EngineMetrics = {
   worldTimeHours: number;
   camera: CameraDebugState;
   boat: BoatDebugState | null;
+  firstPerson: FirstPersonDebugState | null;
   originOffsetMeters: { x: number; z: number };
   status: "booting" | "running" | "error";
   error: string | null;
@@ -153,4 +163,5 @@ export type DebugSettings = {
   cloudDensityBias: number;
   exposureBias: number;
   boatUseModel: boolean;
+  firstPerson: boolean;
 };

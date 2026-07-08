@@ -145,6 +145,25 @@
         ]
   );
 
+  const firstPersonCards = $derived(
+    metrics.firstPerson === null
+      ? [{ label: "FPS", value: "off" }]
+      : [
+          {
+            label: "Local XZ",
+            value: `${metrics.firstPerson.localX.toFixed(2)}, ${metrics.firstPerson.localZ.toFixed(2)}`
+          },
+          { label: "Local Y", value: metrics.firstPerson.localY.toFixed(2) },
+          { label: "Yaw", value: `${metrics.firstPerson.yawDeg.toFixed(0)} deg` },
+          { label: "Pitch", value: `${metrics.firstPerson.pitchDeg.toFixed(0)} deg` },
+          { label: "On Ground", value: metrics.firstPerson.onGround ? "yes" : "no" }
+        ]
+  );
+
+  function toggleFirstPerson() {
+    patch({ firstPerson: !settings.firstPerson, boatUseModel: true });
+  }
+
   function checked(event: Event): boolean {
     return (event.currentTarget as HTMLInputElement).checked;
   }
@@ -340,6 +359,15 @@
           <input type="checkbox" checked={settings.boatUseModel} onchange={(event) => patch({ boatUseModel: checked(event) })} />
         </label>
         <button
+          class="rounded border px-2 py-1 text-[10px] uppercase hover:bg-orange-200/20 {settings.firstPerson
+            ? 'border-orange-100 bg-orange-200/25 text-orange-50'
+            : 'border-orange-200/20 bg-orange-200/10 text-orange-100'}"
+          type="button"
+          onclick={toggleFirstPerson}
+        >
+          Primera persona
+        </button>
+        <button
           class="rounded border border-orange-200/20 bg-orange-200/10 px-2 py-1 text-[10px] uppercase text-orange-100 hover:bg-orange-200/20"
           type="button"
           onclick={onResetBoat}
@@ -356,10 +384,18 @@
         </div>
       {/each}
     </section>
+    <section class="mt-2 grid grid-cols-2 gap-2">
+      {#each firstPersonCards as metric}
+        <div class="rounded border border-white/10 bg-white/[0.045] p-2">
+          <div class="text-[10px] uppercase text-slate-500">{metric.label}</div>
+          <div class="mt-1 truncate font-mono text-[12px] text-slate-100">{metric.value}</div>
+        </div>
+      {/each}
+    </section>
   </section>
 
   <p class="mt-3 text-[11px] leading-snug text-slate-400">
-    Click canvas for pointer lock. WASD move, Space/C vertical, Shift boost, Esc releases. Boat: I/K throttle, J/L rudder.
+    Click canvas for pointer lock. Free camera: WASD move, Space/C vertical, Shift boost, Esc releases. Boat: I/K throttle, J/L rudder. Primera persona: WASD caminar, mouse mirar, Esc sale del modo.
   </p>
 </aside>
 

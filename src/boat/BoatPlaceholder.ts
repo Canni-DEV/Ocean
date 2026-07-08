@@ -1,5 +1,6 @@
 import * as THREE from "three/webgpu";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { MeshBVH } from "three-mesh-bvh";
 import boatModelUrl from "../../assets/fishing_boat.glb?url";
 import { DEFAULT_BOAT_CONFIG, type BoatConfig, type BoatPhysics } from "./BoatPhysics";
 
@@ -37,6 +38,8 @@ export class BoatPlaceholder {
   // });
   private modelReady = false;
   private useModel = false;
+  private colliderGeometry: THREE.BufferGeometry | null = null;
+  private colliderBVH: MeshBVH | null = null;
 
   constructor(config: BoatConfig = DEFAULT_BOAT_CONFIG) {
     this.config = config;
@@ -61,6 +64,18 @@ export class BoatPlaceholder {
     this.syncVisibility();
   }
 
+  isColliderReady(): boolean {
+    return this.colliderBVH !== null;
+  }
+
+  getColliderBVH(): MeshBVH | null {
+    return this.colliderBVH;
+  }
+
+  getColliderGeometry(): THREE.BufferGeometry | null {
+    return this.colliderGeometry;
+  }
+
   dispose(): void {
     this.group.traverse((object) => {
       const mesh = object as THREE.Mesh;
@@ -70,6 +85,9 @@ export class BoatPlaceholder {
         materials.forEach((material) => material.dispose());
       }
     });
+    this.colliderBVH = null;
+    this.colliderGeometry?.dispose();
+    this.colliderGeometry = null;
     this.group.removeFromParent();
   }
 
@@ -81,11 +99,24 @@ export class BoatPlaceholder {
       this.prepareModel(model);
       this.modelGroup.add(model);
       this.modelReady = true;
+      this.buildCollider();
       this.syncVisibility();
     } catch {
       this.modelReady = false;
       this.syncVisibility();
     }
+  }
+
+  private buildCollider(): void {
+    this.colliderBVH = null;
+    this.colliderGeometry?.dispose();
+    this.colliderGeometry = null;
+
+    const merged = mergeMeshesToLocalGeometry(this.modelGroup, this.group);
+    if (!merged) return;
+
+    this.colliderGeometry = merged;
+    this.colliderBVH = new MeshBVH(merged);
   }
 
   private prepareModel(model: THREE.Object3D): void {
@@ -276,6 +307,10 @@ export class BoatPlaceholder {
     return mesh;
   }
 
+  getDefaultSpawnLocalPosition(): THREE.Vector3 {
+    return new THREE.Vector3(0, this.config.hullHeightMeters * 2, this.config.lengthMeters * 0.02);
+  }
+
   private createBowMarker(): THREE.Mesh {
     const geometry = new THREE.ConeGeometry(0.18, 0.55, 4);
     const mesh = new THREE.Mesh(geometry, this.trimMaterial);
@@ -284,4 +319,64 @@ export class BoatPlaceholder {
     mesh.castShadow = true;
     return mesh;
   }
+}
+
+function mergeMeshesToLocalGeometry(
+  sourceRoot: THREE.Object3D,
+  spaceRoot: THREE.Object3D
+): THREE.BufferGeometry | null {
+  spaceRoot.updateMatrixWorld(true);
+  const inverseSpace = new THREE.Matrix4().copy(spaceRoot.matrixWorld).invert();
+  const geometries: THREE.BufferGeometry[] = [];
+
+  sourceRoot.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.geometry) return;
+
+    const geometry = mesh.geometry.clone();
+    const localMatrix = new THREE.Matrix4().multiplyMatrices(inverseSpace, mesh.matrixWorld);
+    geometry.applyMatrix4(localMatrix);
+    geometries.push(geometry);
+  });
+
+  if (geometries.length === 0) return null;
+  return mergeBufferGeometries(geometries);
+}
+
+function mergeBufferGeometries(geometries: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  const merged = new THREE.BufferGeometry();
+  const positions: number[] = [];
+  const indices: number[] = [];
+  let vertexOffset = 0;
+
+  for (const geometry of geometries) {
+    const position = geometry.getAttribute("position");
+    if (!position) {
+      geometry.dispose();
+      continue;
+    }
+
+    for (let i = 0; i < position.count; i += 1) {
+      positions.push(position.getX(i), position.getY(i), position.getZ(i));
+    }
+
+    const index = geometry.getIndex();
+    if (index) {
+      for (let i = 0; i < index.count; i += 1) {
+        indices.push(index.getX(i) + vertexOffset);
+      }
+    } else {
+      for (let i = 0; i < position.count; i += 1) {
+        indices.push(i + vertexOffset);
+      }
+    }
+
+    vertexOffset += position.count;
+    geometry.dispose();
+  }
+
+  merged.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  merged.setIndex(indices);
+  merged.computeVertexNormals();
+  return merged;
 }

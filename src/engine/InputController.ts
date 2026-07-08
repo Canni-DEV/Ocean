@@ -10,6 +10,7 @@ export class InputController {
   private yaw = 0;
   private pitch = -0.2;
   private disposed = false;
+  private enabled = true;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -23,6 +24,8 @@ export class InputController {
   }
 
   update(deltaSeconds: number): void {
+    if (!this.enabled) return;
+
     const boost = this.keys.ShiftLeft || this.keys.ShiftRight ? 4 : 1;
     const speed = 22 * boost;
     const distance = speed * deltaSeconds;
@@ -61,6 +64,20 @@ export class InputController {
     };
   }
 
+  setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+  }
+
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
+  setViewOrientation(yawRad: number, pitchRad: number): void {
+    this.yaw = yawRad;
+    this.pitch = pitchRad;
+    this.syncRotation();
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -83,7 +100,7 @@ export class InputController {
   };
 
   private readonly onMouseMove = (event: MouseEvent): void => {
-    if (document.pointerLockElement !== this.canvas) return;
+    if (!this.enabled || document.pointerLockElement !== this.canvas) return;
 
     this.yaw -= event.movementX * 0.002;
     this.pitch -= event.movementY * 0.002;
