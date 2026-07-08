@@ -29,6 +29,7 @@ export const DEFAULT_DEBUG_SETTINGS: DebugSettings = {
   cloudDensityBias: 0,
   exposureBias: 0,
   boatUseModel: false,
+  boatLightsOn: false,
   firstPerson: false
 };
 

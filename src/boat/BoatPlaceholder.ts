@@ -32,8 +32,7 @@ export class BoatPlaceholder {
   private readonly modelGroup = new THREE.Group();
   private readonly lightGroup = new THREE.Group();
   private readonly spotlight = new THREE.SpotLight(0xfff0d0, 600, 300, 0.9, 0.48, 1.35);
-  private readonly spotlightInner = new THREE.SpotLight(0xfff0d0, 100, 100, 0.75, 0.48, 1.35);
-  private readonly spotlightCabin = new THREE.SpotLight(0xfff0d0, 100, 300, 2.5, 0.48, 1.35);
+  private readonly spotlightCabin = new THREE.SpotLight(0xfff0d0, 10, 300, 2.5, 0.48, 1.35);
   private readonly spotlightTarget = new THREE.Object3D();
   private readonly spotlightInnerTarget = new THREE.Object3D();
   private readonly spotlightCabinTarget = new THREE.Object3D();
@@ -58,6 +57,7 @@ export class BoatPlaceholder {
   // });
   private modelReady = false;
   private useModel = false;
+  private lightsOn = false;
   private colliderGeometry: THREE.BufferGeometry | null = null;
   private colliderBVH: MeshBVH | null = null;
 
@@ -81,6 +81,11 @@ export class BoatPlaceholder {
 
   setUseModel(useModel: boolean): void {
     this.useModel = useModel;
+    this.syncVisibility();
+  }
+
+  setLightsOn(lightsOn: boolean): void {
+    this.lightsOn = lightsOn;
     this.syncVisibility();
   }
 
@@ -184,7 +189,7 @@ export class BoatPlaceholder {
   private syncVisibility(): void {
     this.modelGroup.visible = this.useModel && this.modelReady;
     this.placeholderGroup.visible = !this.modelGroup.visible;
-    this.lightGroup.visible = this.modelGroup.visible;
+    this.lightGroup.visible = this.modelGroup.visible && this.lightsOn;
   }
 
   private createSpotlight(): THREE.Group {
@@ -235,12 +240,6 @@ export class BoatPlaceholder {
     this.spotlightTarget.name = "Boat forward spotlight target";
     this.spotlightTarget.position.copy(targetPosition);
 
-    //Inner
-    this.spotlightInner.name = "Boat forward1 spotlight";
-    this.spotlightInner.position.copy(lightInnerPosition);
-    this.spotlightInner.target = this.spotlightInnerTarget;
-    this.spotlightInner.castShadow = true;
-
     this.spotlightInnerTarget.name = "Boat forward1 spotlight target";
     this.spotlightInnerTarget.position.copy(targetPositionBoat);
 
@@ -260,7 +259,6 @@ export class BoatPlaceholder {
     // marker.userData.depthPass = "exclude";
 
     lightMount.add(this.spotlightCabin, this.spotlightCabinTarget);
-    lightMount.add(this.spotlightInner, this.spotlightInnerTarget);
     lightMount.add(this.spotlight, this.spotlightTarget);
     return lightMount;
   }

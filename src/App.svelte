@@ -22,12 +22,20 @@
 
     engine.start();
 
+    window.addEventListener("keydown", onKeyDown);
+
     return () => {
+      window.removeEventListener("keydown", onKeyDown);
       unsubscribe();
       engine?.dispose();
       engine = null;
     };
   });
+
+  function onKeyDown(event: KeyboardEvent) {
+    if (event.repeat || event.code !== "KeyO") return;
+    debugSettings.update((settings) => ({ ...settings, boatLightsOn: !settings.boatLightsOn }));
+  }
 
   onDestroy(() => {
     engine?.dispose();
