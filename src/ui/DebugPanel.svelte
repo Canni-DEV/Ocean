@@ -39,6 +39,7 @@
     { value: "height", label: "Height" },
     { value: "normal", label: "Normal" },
     { value: "foam", label: "Foam" },
+    { value: "boatInteraction", label: "Boat Wake" },
     { value: "jacobian", label: "Jacobian" },
     { value: "slope", label: "Slope" },
     { value: "cascades", label: "Cascades" },
@@ -94,6 +95,10 @@
     {
       label: "Ocean Upd",
       value: metrics.oceanComputeMs === null ? "n/a" : `${metrics.oceanComputeMs.toFixed(1)} ms`
+    },
+    {
+      label: "Boat Wake",
+      value: metrics.boatInteractionComputeMs === null ? "n/a" : `${metrics.boatInteractionComputeMs.toFixed(1)} ms`
     },
     {
       label: "Clouds Upd",
@@ -284,6 +289,14 @@
         <input min="0.02" max="0.6" step="0.01" type="range" value={settings.foamDecay} oninput={(event) => patch({ foamDecay: numberValue(event) })} />
       </label>
       <label>
+        <span>Boat Wake {settings.boatWakeIntensity.toFixed(2)}</span>
+        <input min="0" max="2" step="0.01" type="range" value={settings.boatWakeIntensity} oninput={(event) => patch({ boatWakeIntensity: numberValue(event) })} />
+      </label>
+      <label>
+        <span>Boat Foam {settings.boatWakeFoamIntensity.toFixed(2)}</span>
+        <input min="0" max="2" step="0.01" type="range" value={settings.boatWakeFoamIntensity} oninput={(event) => patch({ boatWakeFoamIntensity: numberValue(event) })} />
+      </label>
+      <label>
         <span>Turbidez {settings.waterTurbidity.toFixed(2)}</span>
         <input min="0" max="1" step="0.01" type="range" value={settings.waterTurbidity} oninput={(event) => patch({ waterTurbidity: numberValue(event) })} />
       </label>
@@ -326,6 +339,10 @@
     <label class="flex min-h-8 items-center justify-between gap-2 rounded border border-white/10 bg-white/[0.045] px-2 py-1">
       <span>Foam</span>
       <input type="checkbox" checked={settings.showFoam} onchange={(event) => patch({ showFoam: checked(event) })} />
+    </label>
+    <label class="flex min-h-8 items-center justify-between gap-2 rounded border border-white/10 bg-white/[0.045] px-2 py-1">
+      <span>Boat Wake</span>
+      <input type="checkbox" checked={settings.boatWaterInteraction} onchange={(event) => patch({ boatWaterInteraction: checked(event) })} />
     </label>
     <label class="flex min-h-8 items-center justify-between gap-2 rounded border border-white/10 bg-white/[0.045] px-2 py-1">
       <span>Rain</span>

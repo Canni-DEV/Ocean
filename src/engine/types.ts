@@ -22,6 +22,7 @@ export type DebugRenderMode =
   | "height"
   | "normal"
   | "foam"
+  | "boatInteraction"
   | "jacobian"
   | "slope"
   | "cascades"
@@ -122,6 +123,7 @@ export type EngineMetrics = {
   oceanComputeMs: number | null;
   cloudComputeMs: number | null;
   depthPrepassMs: number | null;
+  boatInteractionComputeMs: number | null;
   seaLevelAtCameraM: number | null;
   worldTimeHours: number;
   camera: CameraDebugState;
@@ -147,6 +149,7 @@ export type DebugSettings = {
   showFoam: boolean;
   showRain: boolean;
   showClouds: boolean;
+  boatWaterInteraction: boolean;
   /** Weather preset transition duration in seconds. */
   weatherTransitionSeconds: number;
   wireframe: boolean;
@@ -158,6 +161,8 @@ export type DebugSettings = {
   choppiness: number;
   foamIntensity: number;
   foamDecay: number;
+  boatWakeIntensity: number;
+  boatWakeFoamIntensity: number;
   waterTurbidity: number;
   cloudCoverageBias: number;
   cloudDensityBias: number;

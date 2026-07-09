@@ -1,5 +1,6 @@
 import * as THREE from "three/webgpu";
-import { Fn, float, instancedArray, instanceIndex, texture, uint, uniform, vec2, vec3, vec4 } from "three/tsl";
+import { Fn, float, instancedArray, instanceIndex, step, texture, uint, uniform, vec2, vec3, vec4 } from "three/tsl";
+import type { BoatWaterInteraction } from "./BoatWaterInteraction";
 import type { OceanSimulation } from "./simulation/OceanSimulation";
 
 type NodeRef = any;
@@ -20,6 +21,11 @@ export class OceanPhysicsSampler {
   private readonly buffer: NodeRef;
   private readonly computePass: NodeRef;
   private readonly regionOrigin: NodeRef;
+  private readonly boatInteraction: BoatWaterInteraction | null;
+  private readonly interactionTexture: NodeRef | null;
+  private readonly interactionOrigin: NodeRef;
+  private readonly interactionSize: NodeRef;
+  private readonly interactionEnabled: NodeRef;
 
   private readonly heights = new Float32Array(GRID_SIZE * GRID_SIZE);
   private readonly displacementsX = new Float32Array(GRID_SIZE * GRID_SIZE);
@@ -31,12 +37,21 @@ export class OceanPhysicsSampler {
   private readbackInFlight = false;
   private hasData = false;
 
-  constructor(simulation: OceanSimulation) {
+  constructor(simulation: OceanSimulation, boatInteraction: BoatWaterInteraction | null = null) {
+    this.boatInteraction = boatInteraction;
     this.buffer = instancedArray(GRID_SIZE * GRID_SIZE, "vec4");
     this.regionOrigin = uniform(new THREE.Vector2());
+    this.interactionOrigin = uniform(new THREE.Vector2());
+    this.interactionSize = uniform(1);
+    this.interactionEnabled = uniform(0);
 
     const displacementNodes = simulation.cascades.map((cascade) => texture(cascade.displacementTexture));
+    this.interactionTexture = boatInteraction ? texture(boatInteraction.currentTexture) : null;
     const regionOrigin = this.regionOrigin;
+    const interactionTexture = this.interactionTexture;
+    const interactionOrigin = this.interactionOrigin;
+    const interactionSize = this.interactionSize;
+    const interactionEnabled = this.interactionEnabled;
     const buffer = this.buffer;
     const cellSize = REGION_METERS / GRID_SIZE;
 
@@ -50,6 +65,17 @@ export class OceanPhysicsSampler {
         const uv = worldXZ.div(cascade.config.patchSize);
         displacement = displacement.add((displacementNodes[index] as any).sample(uv).level(float(0)).xyz);
       });
+
+      if (interactionTexture) {
+        const interactionUv = worldXZ.sub(interactionOrigin).div(interactionSize);
+        const inside = step(float(0), interactionUv.x)
+          .mul(step(interactionUv.x, float(1)))
+          .mul(step(float(0), interactionUv.y))
+          .mul(step(interactionUv.y, float(1)))
+          .mul(interactionEnabled);
+        const interactionHeight = (interactionTexture as any).sample(interactionUv).level(float(0)).r.mul(inside);
+        displacement = displacement.add(vec3(0, interactionHeight, 0));
+      }
 
       buffer.element(instanceIndex).assign(vec4(displacement, 0));
     })().compute(GRID_SIZE * GRID_SIZE);
@@ -65,6 +91,16 @@ export class OceanPhysicsSampler {
    * and kicks an async readback if the previous one finished.
    */
   update(renderer: THREE.WebGPURenderer, centerWorldX: number, centerWorldZ: number): void {
+    if (this.boatInteraction && this.interactionTexture) {
+      const interaction = this.boatInteraction.sampleState;
+      this.interactionTexture.value = interaction.texture;
+      this.interactionOrigin.value.copy(interaction.origin);
+      this.interactionSize.value = interaction.sizeMeters;
+      this.interactionEnabled.value = interaction.enabled ? 1 : 0;
+    } else {
+      this.interactionEnabled.value = 0;
+    }
+
     const half = REGION_METERS / 2;
     this.pendingOriginX = centerWorldX - half;
     this.pendingOriginZ = centerWorldZ - half;

@@ -5,6 +5,7 @@ import { BoatPhysics } from "../boat/BoatPhysics";
 import { BoatPlaceholder } from "../boat/BoatPlaceholder";
 import { OceanPhysicsSampler } from "../ocean/OceanPhysicsSampler";
 import { OceanRenderer } from "../ocean/OceanRenderer";
+import { BoatWaterInteraction } from "../ocean/BoatWaterInteraction";
 import { FirstPersonController } from "../player/FirstPersonController";
 import { OceanSimulation, OCEAN_QUALITY } from "../ocean/simulation/OceanSimulation";
 import { cloneWeather, easeWeatherProgress, lerpWeather, WEATHER_PRESETS } from "../state/weather";
@@ -38,6 +39,7 @@ export class EngineApp {
   private renderer: THREE.WebGPURenderer | null = null;
   private simulation: OceanSimulation | null = null;
   private ocean: OceanRenderer | null = null;
+  private boatInteraction: BoatWaterInteraction | null = null;
   private physics: OceanPhysicsSampler | null = null;
   private boatPhysicsSampler: OceanPhysicsSampler | null = null;
   private atmosphere: AtmosphereSystem | null = null;
@@ -56,6 +58,7 @@ export class EngineApp {
   private seaStateCurrent: SeaStateParams | null = null;
   private originOffsetMeters = { x: 0, z: 0 };
   private oceanComputeMs: number | null = null;
+  private boatInteractionComputeMs: number | null = null;
   private cloudComputeMs: number | null = null;
   private depthPrepassMs: number | null = null;
   private simulationTimeSeconds = 0;
@@ -117,6 +120,7 @@ export class EngineApp {
     this.boatController.dispose();
     this.boatPlaceholder.dispose();
     this.ocean?.dispose();
+    this.boatInteraction?.dispose();
     this.simulation?.dispose();
     this.atmosphere?.dispose();
     this.sceneDepthPass.dispose();
@@ -173,16 +177,19 @@ export class EngineApp {
   private createOcean(tier: QualityTier): void {
     this.activeQuality = tier;
     const simulation = new OceanSimulation(tier);
+    const boatInteraction = new BoatWaterInteraction(tier);
     const ocean = new OceanRenderer({
       scene: this.scene,
       simulation,
+      boatInteraction,
       cloudShadows: this.atmosphere?.cloudShadows ?? null
     });
     ocean.applySettings(this.settings);
     this.simulation = simulation;
+    this.boatInteraction = boatInteraction;
     this.ocean = ocean;
-    this.physics = new OceanPhysicsSampler(simulation);
-    this.boatPhysicsSampler = new OceanPhysicsSampler(simulation);
+    this.physics = new OceanPhysicsSampler(simulation, boatInteraction);
+    this.boatPhysicsSampler = new OceanPhysicsSampler(simulation, boatInteraction);
     this.seaStateCurrent = null;
 
     const quality = OCEAN_QUALITY[tier];
@@ -192,8 +199,10 @@ export class EngineApp {
 
   private rebuildOcean(tier: QualityTier): void {
     this.ocean?.dispose();
+    this.boatInteraction?.dispose();
     this.simulation?.dispose();
     this.ocean = null;
+    this.boatInteraction = null;
     this.simulation = null;
     this.physics = null;
     this.boatPhysicsSampler = null;
@@ -272,8 +281,15 @@ export class EngineApp {
     this.updateSeaState(tunedWeather, deltaSeconds);
     if (!this.settings.paused) {
       this.simulation.update(this.renderer, this.simulationTimeSeconds, deltaSeconds);
+      this.boatInteraction?.update({
+        renderer: this.renderer,
+        boat: this.boatPhysics.getWaterInteractionState(this.originOffsetMeters),
+        settings: this.settings,
+        deltaSeconds
+      });
     }
     this.oceanComputeMs = this.simulation.computeMs;
+    this.boatInteractionComputeMs = this.boatInteraction?.computeMs ?? null;
 
     this.ocean.update(
       this.input.camera,
@@ -440,6 +456,7 @@ export class EngineApp {
       cpuMs: this.stats.cpuMs,
       gpuMs: null,
       oceanComputeMs: this.oceanComputeMs,
+      boatInteractionComputeMs: this.boatInteractionComputeMs,
       cloudComputeMs: this.cloudComputeMs,
       depthPrepassMs: this.depthPrepassMs,
       seaLevelAtCameraM: seaLevel ?? null,

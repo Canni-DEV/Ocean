@@ -40,6 +40,21 @@ export type BoatPhysicsMetrics = {
   waterHeightM: number | null;
 };
 
+export type BoatWaterInteractionState = {
+  position: { x: number; z: number };
+  forward: { x: number; z: number };
+  right: { x: number; z: number };
+  velocity: { x: number; z: number };
+  speedMs: number;
+  lateralSpeedMs: number;
+  throttle: number;
+  rudder: number;
+  capsized: boolean;
+  lengthMeters: number;
+  beamMeters: number;
+  draftMeters: number;
+};
+
 export type BoatUpdateOptions = {
   deltaSeconds: number;
   control: BoatControlState;
@@ -191,6 +206,37 @@ export class BoatPhysics {
       rudder: this.lastControl.rudder,
       capsized: this.capsized,
       waterHeightM: this.waterHeightAtCenter
+    };
+  }
+
+  getWaterInteractionState(originOffsetMeters: { x: number; z: number }): BoatWaterInteractionState {
+    const forward3 = new THREE.Vector3(0, 0, -1).applyQuaternion(this.quaternion);
+    const right3 = new THREE.Vector3(1, 0, 0).applyQuaternion(this.quaternion);
+    const forward = new THREE.Vector2(forward3.x, forward3.z);
+    const right = new THREE.Vector2(right3.x, right3.z);
+    if (forward.lengthSq() < 1e-8) forward.set(0, -1);
+    if (right.lengthSq() < 1e-8) right.set(1, 0);
+    forward.normalize();
+    right.normalize();
+
+    const horizontalVelocity = new THREE.Vector2(this.velocity.x, this.velocity.z);
+
+    return {
+      position: {
+        x: this.position.x + originOffsetMeters.x,
+        z: this.position.z + originOffsetMeters.z
+      },
+      forward: { x: forward.x, z: forward.y },
+      right: { x: right.x, z: right.y },
+      velocity: { x: horizontalVelocity.x, z: horizontalVelocity.y },
+      speedMs: horizontalVelocity.length(),
+      lateralSpeedMs: Math.abs(horizontalVelocity.dot(right)),
+      throttle: this.lastControl.throttle,
+      rudder: this.lastControl.rudder,
+      capsized: this.capsized,
+      lengthMeters: this.config.lengthMeters,
+      beamMeters: this.config.beamMeters,
+      draftMeters: this.config.draftMeters
     };
   }
 
