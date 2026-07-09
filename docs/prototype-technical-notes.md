@@ -4,6 +4,7 @@ This prototype is intentionally WebGPU-only. It should fail with a clear message
 
 ## Controls
 
+- `` ` `` (`Backquote`): show or hide the debug menu.
 - Click the canvas to enter pointer lock.
 - `WASD`: horizontal movement.
 - `Space`: move up.

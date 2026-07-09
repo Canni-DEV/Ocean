@@ -177,7 +177,7 @@
   }
 </script>
 
-<aside class="pointer-events-auto max-h-[calc(100vh-24px)] w-[360px] max-w-[calc(100vw-24px)] overflow-y-auto rounded border border-white/15 bg-slate-950/82 p-3 text-[12px] leading-tight text-slate-100 shadow-2xl backdrop-blur">
+<aside class="pointer-events-auto max-h-[calc(100vh-64px)] w-[360px] max-w-[calc(100vw-24px)] overflow-y-auto rounded border border-white/15 bg-slate-950/82 p-3 text-[12px] leading-tight text-slate-100 shadow-2xl backdrop-blur">
   <div class="mb-3 flex items-start justify-between gap-3">
     <div>
       <h1 class="text-sm font-semibold tracking-normal">Ocean Prototype</h1>
@@ -399,7 +399,7 @@
   </section>
 
   <p class="mt-3 text-[11px] leading-snug text-slate-400">
-    Click canvas for pointer lock. Free camera: WASD move, Space/C vertical, Shift boost, Esc releases. Boat: I/K throttle, J/L rudder, O luces. Primera persona: WASD caminar, mouse mirar, Esc sale del modo.
+    Debug: ` muestra/oculta el menú. Click canvas for pointer lock. Free camera: WASD move, Space/C vertical, Shift boost, Esc releases. Boat: I/K throttle, J/L rudder, O luces. Primera persona: WASD caminar, mouse mirar, Esc sale del modo.
   </p>
 </aside>
 
