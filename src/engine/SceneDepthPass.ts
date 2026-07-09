@@ -4,14 +4,20 @@ type MaterialState = {
   colorWrite: boolean;
 };
 
+type MeshMaterialState = {
+  mesh: THREE.Mesh;
+  material: THREE.Material | THREE.Material[];
+};
+
 type VisibilityState = {
   object: THREE.Object3D;
   visible: boolean;
 };
 
 /**
- * Captures the physical scene depth with the production materials, but with
- * color writes disabled so shader-driven vertex displacement stays exact.
+ * Captures physical scene depth. Meshes may provide a lightweight
+ * `customDepthMaterial`; other meshes keep their production material so custom
+ * vertex transforms remain exact. Color writes are disabled in both cases.
  */
 export class SceneDepthPass {
   private readonly target: THREE.RenderTarget;
@@ -41,31 +47,36 @@ export class SceneDepthPass {
   capture(renderer: THREE.WebGPURenderer, scene: THREE.Scene, camera: THREE.Camera): void {
     const visibilityStates: VisibilityState[] = [];
     const materialStates = new Map<THREE.Material, MaterialState>();
-
-    scene.traverse((object) => {
-      if (object.userData.depthPass === false || object.userData.depthPass === "exclude") {
-        visibilityStates.push({ object, visible: object.visible });
-        object.visible = false;
-        return;
-      }
-      if (!object.visible) return;
-
-      const mesh = object as THREE.Mesh;
-      if (!mesh.isMesh || !mesh.material) return;
-
-      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      for (const material of materials) {
-        if (!materialStates.has(material)) {
-          materialStates.set(material, { colorWrite: material.colorWrite });
-        }
-        material.colorWrite = false;
-      }
-    });
-
+    const meshMaterialStates: MeshMaterialState[] = [];
     const previousTarget = renderer.getRenderTarget();
     const previousAutoClear = renderer.autoClear;
 
     try {
+      scene.traverse((object) => {
+        if (object.userData.depthPass === false || object.userData.depthPass === "exclude") {
+          visibilityStates.push({ object, visible: object.visible });
+          object.visible = false;
+          return;
+        }
+        if (!object.visible) return;
+
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh || !mesh.material) return;
+
+        if (mesh.customDepthMaterial) {
+          meshMaterialStates.push({ mesh, material: mesh.material });
+          mesh.material = mesh.customDepthMaterial;
+        }
+
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const material of materials) {
+          if (!materialStates.has(material)) {
+            materialStates.set(material, { colorWrite: material.colorWrite });
+          }
+          material.colorWrite = false;
+        }
+      });
+
       renderer.autoClear = true;
       renderer.setRenderTarget(this.target);
       renderer.render(scene, camera);
@@ -73,6 +84,9 @@ export class SceneDepthPass {
       renderer.setRenderTarget(previousTarget);
       renderer.autoClear = previousAutoClear;
 
+      for (const state of meshMaterialStates) {
+        state.mesh.material = state.material;
+      }
       for (const [material, state] of materialStates) {
         material.colorWrite = state.colorWrite;
       }

@@ -43,6 +43,83 @@ function sceneDepthUvFromScreenUv(screenUv: NodeRef): NodeRef {
   return vec2(screenUv.x, float(1).sub(screenUv.y));
 }
 
+function reconstructViewRay(
+  screenUv: NodeRef,
+  inverseProjection: NodeRef,
+  cameraWorld: NodeRef
+): { viewDirection: NodeRef; worldDirection: NodeRef } {
+  const ndc = screenUv.mul(2).sub(1);
+  const viewPosition: NodeRef = inverseProjection.mul(vec4(ndc.x, ndc.y, 0.5, 1));
+  const viewDirection = viewPosition.xyz.div(viewPosition.w).normalize();
+  const worldDirection: NodeRef = cameraWorld.mul(vec4(viewDirection, 0)).xyz.normalize();
+  return { viewDirection, worldDirection };
+}
+
+function reconstructSceneDistance(
+  screenUv: NodeRef,
+  viewDirection: NodeRef,
+  sceneDepthTexture: NodeRef,
+  cameraNear: NodeRef,
+  cameraFar: NodeRef
+): { rawDepth: NodeRef; viewZ: NodeRef; distance: NodeRef } {
+  const depthUv = sceneDepthUvFromScreenUv(screenUv);
+  const rawDepth: NodeRef = sceneDepthTexture.sample(depthUv).r;
+  const viewZ: NodeRef = perspectiveDepthToViewZ(rawDepth, cameraNear, cameraFar);
+  return {
+    rawDepth,
+    viewZ,
+    distance: viewZ.div(viewDirection.z).max(0)
+  };
+}
+
+/** Ray/sphere intersection as vec3(near, far, discriminant). */
+function raySphereIntersection(rayOrigin: NodeRef, rayDirection: NodeRef, radius: NodeRef): NodeRef {
+  const b = dot(rayOrigin, rayDirection);
+  const c = dot(rayOrigin, rayOrigin).sub(radius.mul(radius));
+  const discriminant = b.mul(b).sub(c);
+  const root = sqrt(max(discriminant, 0));
+  return vec3(b.negate().sub(root), b.negate().add(root), discriminant);
+}
+
+/**
+ * Returns the exact [entry, exit] interval through the spherical cloud layer.
+ * A negative exit marks a ray that never reaches the layer.
+ */
+function cloudShellInterval(
+  cameraAltitude: NodeRef,
+  worldDirection: NodeRef,
+  cloudBase: NodeRef,
+  cloudThickness: NodeRef
+): { entry: NodeRef; exit: NodeRef } {
+  const earthCenterOffset = vec3(0, cameraAltitude.add(EARTH_RADIUS), 0);
+  const baseRadius = float(EARTH_RADIUS).add(cloudBase);
+  const topRadius = baseRadius.add(cloudThickness);
+  const baseHit: NodeRef = raySphereIntersection(earthCenterOffset, worldDirection, baseRadius);
+  const topHit: NodeRef = raySphereIntersection(earthCenterOffset, worldDirection, topRadius);
+  const cameraRadius = cameraAltitude.add(EARTH_RADIUS);
+  const entry = float(0).toVar();
+  const exit = float(-1).toVar();
+
+  If(cameraRadius.lessThan(baseRadius), () => {
+    entry.assign(baseHit.y.max(0));
+    exit.assign(topHit.y);
+  })
+    .ElseIf(cameraRadius.greaterThan(topRadius), () => {
+      If(topHit.z.greaterThan(0).and(topHit.x.greaterThan(0)), () => {
+        entry.assign(topHit.x);
+        const hitsBase = baseHit.z.greaterThan(0).and(baseHit.x.greaterThan(0));
+        exit.assign(hitsBase.select(baseHit.x, topHit.y));
+      });
+    })
+    .Else(() => {
+      entry.assign(0);
+      const hitsBase = baseHit.z.greaterThan(0).and(baseHit.x.greaterThan(0));
+      exit.assign(hitsBase.select(baseHit.x, topHit.y));
+    });
+
+  return { entry, exit };
+}
+
 export type CloudQualityConfig = {
   /** Render target scale relative to the canvas (0.25 = quarter res). */
   resolutionScale: number;
@@ -96,10 +173,10 @@ export type SceneDepthInput = {
  * direction-based reprojection, plus an analytic high-altitude cirrus layer.
  *
  * The resolved buffer stores only cloud radiance/transmittance: premultiplied
- * HDR radiance in RGB and view transmittance in A. Ocean occlusion is handled
- * analytically inside the march by clamping rays against the sea plane; mesh
- * occlusion is applied later in the fullscreen composite so moving objects
- * never contaminate the cloud history.
+ * HDR radiance in RGB and view transmittance in A. The analytic sea-plane
+ * clamp avoids unnecessary downward marching, while authoritative occlusion
+ * from meshes and FFT-displaced waves is applied later in the fullscreen
+ * composite so moving geometry never contaminates the cloud history.
  */
 export class VolumetricCloudPass {
   readonly compositeMesh: THREE.Mesh;
@@ -353,59 +430,26 @@ export class VolumetricCloudPass {
     const uDepthBias = this.uDepthBiasMeters;
     const uDebugMode = this.uDebugMode;
 
-    const raySphereLocal = (roc: NodeRef, rd: NodeRef, radius: NodeRef): NodeRef => {
-      const b = dot(roc, rd);
-      const c = dot(roc, roc).sub(radius.mul(radius));
-      const disc = b.mul(b).sub(c);
-      const s = sqrt(max(disc, 0));
-      return vec3(b.negate().sub(s), b.negate().add(s), disc);
-    };
-
     material.fragmentNode = Fn(() => {
       const sampleUV: NodeRef = uv();
       const clouds: NodeRef = resolved.sample(sampleUV);
-
-      const ndc = sampleUV.mul(2).sub(1);
-      const viewDir4: NodeRef = uInvProj.mul(vec4(ndc.x, ndc.y, 0.5, 1));
-      const viewDir = viewDir4.xyz.div(viewDir4.w).normalize();
-      const worldDir: NodeRef = uCamWorld.mul(vec4(viewDir, 0)).xyz.normalize();
-
-      const sceneDepthUV: NodeRef = sceneDepthUvFromScreenUv(sampleUV);
-      const sceneDepthRaw: NodeRef = sceneDepthTex.sample(sceneDepthUV).r;
-      const sceneViewZ: NodeRef = perspectiveDepthToViewZ(sceneDepthRaw, uCameraNear, uCameraFar);
-      const sceneDistance: NodeRef = sceneViewZ.div(viewDir.z).max(0);
-      const validSceneDepth = uHasSceneDepth.greaterThan(0.5).and(sceneDepthRaw.lessThan(0.999999));
-
-      const camAltitude = uCamPos.y;
-      const earthCenterOffset = vec3(0, camAltitude.add(EARTH_RADIUS), 0);
-      const rBase = float(EARTH_RADIUS).add(uCloudBase);
-      const rTop = float(EARTH_RADIUS).add(uCloudBase).add(uCloudThickness);
-      const hitBase: NodeRef = raySphereLocal(earthCenterOffset, worldDir, rBase);
-      const hitTop: NodeRef = raySphereLocal(earthCenterOffset, worldDir, rTop);
-
-      const camRadius = camAltitude.add(EARTH_RADIUS);
-      const belowLayer = camRadius.lessThan(rBase);
-      const aboveLayer = camRadius.greaterThan(rTop);
-      const cloudStart = float(1e9).toVar();
-
-      If(belowLayer, () => {
-        cloudStart.assign(hitBase.y.max(0));
-      })
-        .ElseIf(aboveLayer, () => {
-          If(hitTop.z.greaterThan(0).and(hitTop.x.greaterThan(0)), () => {
-            cloudStart.assign(hitTop.x.max(0));
-          });
-        })
-        .Else(() => {
-          cloudStart.assign(0);
-        });
-
-      const horizonFallback = uCloudBase.div(worldDir.y.max(0.02)).max(0);
-      const firstPossibleCloud = cloudStart.min(horizonFallback);
+      const ray = reconstructViewRay(sampleUV, uInvProj, uCamWorld);
+      const sceneDepth = reconstructSceneDistance(
+        sampleUV,
+        ray.viewDirection,
+        sceneDepthTex,
+        uCameraNear,
+        uCameraFar
+      );
+      const validSceneDepth = uHasSceneDepth.greaterThan(0.5).and(sceneDepth.rawDepth.lessThan(0.999999));
+      const cloudInterval = cloudShellInterval(uCamPos.y, ray.worldDirection, uCloudBase, uCloudThickness);
       const hasCloud = clouds.a.lessThan(0.999);
       const edgeFade = validSceneDepth
         .and(hasCloud)
-        .select(smoothstep(float(0.35), float(6), sceneDistance.sub(firstPossibleCloud).add(uDepthBias)), float(1));
+        .select(
+          smoothstep(float(0.35), float(6), sceneDepth.distance.sub(cloudInterval.entry).add(uDepthBias)),
+          float(1)
+        );
       const finalFade = uDebugMode.greaterThan(0.5).select(float(1), edgeFade);
       return vec4(clouds.rgb.mul(finalFade), mix(float(1), clouds.a, finalFade));
     })();
@@ -544,18 +588,6 @@ export class VolumetricCloudPass {
       return vec2(cloud.mul(heightDensity), precip.mul(float(1).sub(clearAir.mul(0.55))));
     };
 
-    /** Ray-sphere against earth-centered sphere. ro is relative to earth center. */
-    const raySphere = (roc: NodeRef, rd: NodeRef, radius: NodeRef): NodeRef => {
-      const b = dot(roc, rd);
-      const c = dot(roc, roc).sub(radius.mul(radius));
-      const disc = b.mul(b).sub(c);
-      const s = sqrt(max(disc, 0));
-      const near = b.negate().sub(s);
-      const far = b.negate().add(s);
-      // miss flagged by far < near via disc sign
-      return vec3(near, far, disc);
-    };
-
     const henyeyGreenstein = (cosTheta: NodeRef, g: number): NodeRef => {
       const g2 = g * g;
       const denom = float(1 + g2).sub(cosTheta.mul(2 * g)).pow(1.5).max(1e-4);
@@ -564,7 +596,6 @@ export class VolumetricCloudPass {
 
     return Fn(() => {
       const screenPos: NodeRef = uv();
-      const ndc = screenPos.mul(2).sub(1);
       const debugWeather: NodeRef = weatherTex.sample(screenPos).level(float(0));
       const seamEdge = float(1)
         .sub(smoothstep(float(0.0), float(0.012), screenPos.x))
@@ -599,50 +630,25 @@ export class VolumetricCloudPass {
         });
 
       // Reconstruct the world-space view ray from the scene camera matrices
-      const viewDir4: NodeRef = uInvProj.mul(vec4(ndc.x, ndc.y, 0.5, 1));
-      const viewDir = viewDir4.xyz.div(viewDir4.w);
-      const viewDirNorm = viewDir.normalize();
-      const worldDir: NodeRef = uCamWorld.mul(vec4(viewDir, 0)).xyz.normalize().toVar();
-      const sceneDepthUV: NodeRef = sceneDepthUvFromScreenUv(screenPos);
-      const sceneDepthRaw: NodeRef = sceneDepthTex.sample(sceneDepthUV).r;
-      const sceneViewZ: NodeRef = perspectiveDepthToViewZ(sceneDepthRaw, uCameraNear, uCameraFar);
-      const sceneDistance: NodeRef = sceneViewZ.div(viewDirNorm.z).max(0);
-      const validSceneDepth = uHasSceneDepth.greaterThan(0.5).and(sceneDepthRaw.lessThan(0.999999));
+      const ray = reconstructViewRay(screenPos, uInvProj, uCamWorld);
+      const worldDir: NodeRef = ray.worldDirection.toVar();
+      const sceneDepth = reconstructSceneDistance(
+        screenPos,
+        ray.viewDirection,
+        sceneDepthTex,
+        uCameraNear,
+        uCameraFar
+      );
+      const validSceneDepth = uHasSceneDepth.greaterThan(0.5).and(sceneDepth.rawDepth.lessThan(0.999999));
 
       // Local frame: origin at sea level directly below the camera
       const camAltitude = uCamPos.y;
       const earthCenterOffset = vec3(0, camAltitude.add(EARTH_RADIUS), 0);
 
-      const rBase = float(EARTH_RADIUS).add(uCloudBase);
-      const rTop = float(EARTH_RADIUS).add(uCloudBase).add(uCloudThickness);
-
-      const hitBase: NodeRef = raySphere(earthCenterOffset, worldDir, rBase);
-      const hitTop: NodeRef = raySphere(earthCenterOffset, worldDir, rTop);
-
-      const camRadius = camAltitude.add(EARTH_RADIUS);
-      const belowLayer = camRadius.lessThan(rBase);
-      const aboveLayer = camRadius.greaterThan(rTop);
-
       // March interval [start, end] through the cloud shell
-      const start = float(0).toVar();
-      const end = float(-1).toVar();
-
-      If(belowLayer, () => {
-        start.assign(hitBase.y.max(0));
-        end.assign(hitTop.y);
-      })
-        .ElseIf(aboveLayer, () => {
-          If(hitTop.z.greaterThan(0).and(hitTop.x.greaterThan(0)), () => {
-            start.assign(hitTop.x);
-            const hitsBase = hitBase.z.greaterThan(0).and(hitBase.x.greaterThan(0));
-            end.assign(hitsBase.select(hitBase.x, hitTop.y));
-          });
-        })
-        .Else(() => {
-          start.assign(0);
-          const hitsBase = hitBase.z.greaterThan(0).and(hitBase.x.greaterThan(0));
-          end.assign(hitsBase.select(hitBase.x, hitTop.y));
-        });
+      const cloudInterval = cloudShellInterval(camAltitude, worldDir, uCloudBase, uCloudThickness);
+      const start = cloudInterval.entry;
+      const end = cloudInterval.exit;
 
       // Analytic occlusion by the sea surface (plane y = 0)
       If(worldDir.y.lessThan(-0.0005), () => {
@@ -781,7 +787,7 @@ export class VolumetricCloudPass {
       // ---------------------------------------------------------------- cirrus
       If(uCirrus.greaterThan(0.005).and(transmittance.greaterThan(0.01)), () => {
         const rCirrus = float(EARTH_RADIUS + CIRRUS_ALTITUDE);
-        const hitCirrus: NodeRef = raySphere(earthCenterOffset, worldDir, rCirrus);
+        const hitCirrus: NodeRef = raySphereIntersection(earthCenterOffset, worldDir, rCirrus);
         const tCirrus = hitCirrus.y;
         If(hitCirrus.z.greaterThan(0).and(tCirrus.greaterThan(0)).and(camAltitude.lessThan(CIRRUS_ALTITUDE)), () => {
           const posXZ = worldDir.xz.mul(tCirrus).add(uCamAbsXZ).sub(uWindOffset.mul(1.8));
@@ -851,11 +857,11 @@ export class VolumetricCloudPass {
       const temporal = mix(current, clampedHistory, blend);
       const cloudOcclusionMask = validSceneDepth
         .and(firstHitDistance.greaterThan(0))
-        .and(sceneDistance.add(uDepthBias).lessThan(firstHitDistance))
+        .and(sceneDepth.distance.add(uDepthBias).lessThan(firstHitDistance))
         .select(float(1), float(0));
       const finalDebug = debugOut.toVar();
       If(uDebugMode.greaterThan(7.5).and(uDebugMode.lessThan(8.5)), () => {
-        finalDebug.assign(vec4(vec3(sceneViewZ.negate().div(8000).clamp(0, 1)), 0));
+        finalDebug.assign(vec4(vec3(sceneDepth.viewZ.negate().div(8000).clamp(0, 1)), 0));
       })
         .ElseIf(uDebugMode.greaterThan(8.5).and(uDebugMode.lessThan(9.5)), () => {
           finalDebug.assign(vec4(vec3(end.max(0).div(16000).clamp(0, 1)), 0));
