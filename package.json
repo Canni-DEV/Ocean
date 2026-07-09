@@ -14,6 +14,7 @@
     "@tailwindcss/vite": "^4.1.11",
     "svelte": "^5.36.0",
     "three": "^0.185.1",
+    "three-mesh-bvh": "^0.9.10",
     "vite": "^7.0.0"
   },
   "devDependencies": {

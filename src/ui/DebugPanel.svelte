@@ -14,9 +14,10 @@
     settings: DebugSettings;
     metrics: EngineMetrics;
     onChange: (settings: DebugSettings) => void;
+    onResetBoat: () => void;
   };
 
-  let { settings, metrics, onChange }: Props = $props();
+  let { settings, metrics, onChange, onResetBoat }: Props = $props();
   let showAdvanced = $state(false);
 
   const weatherOptions: Array<{ value: WeatherPresetName; label: string }> = [
@@ -52,7 +53,11 @@
     { value: "erosion", label: "Erosion" },
     { value: "densitySlice", label: "Density Slice" },
     { value: "historyWeight", label: "History Weight" },
-    { value: "seamGrid", label: "Seam Grid" }
+    { value: "seamGrid", label: "Seam Grid" },
+    { value: "sceneDepth", label: "Scene Depth" },
+    { value: "cloudRayEnd", label: "Cloud Ray End" },
+    { value: "cloudFirstHit", label: "Cloud First Hit" },
+    { value: "cloudOcclusionMask", label: "Cloud Occlusion" }
   ];
 
   const beaufortLabels = [
@@ -95,6 +100,10 @@
       value: metrics.cloudComputeMs === null ? "n/a" : `${metrics.cloudComputeMs.toFixed(1)} ms`
     },
     {
+      label: "Depth Pre",
+      value: metrics.depthPrepassMs === null ? "n/a" : `${metrics.depthPrepassMs.toFixed(1)} ms`
+    },
+    {
       label: "Sea Level",
       value: metrics.seaLevelAtCameraM === null ? "n/a" : `${metrics.seaLevelAtCameraM.toFixed(2)} m`
     },
@@ -113,6 +122,48 @@
     { label: "Pitch", value: `${metrics.camera.pitchDeg.toFixed(0)} deg` }
   ]);
 
+  const boatCards = $derived(
+    metrics.boat === null
+      ? [{ label: "Boat", value: "n/a" }]
+      : [
+          { label: "Boat Speed", value: `${metrics.boat.speedMs.toFixed(1)} m/s` },
+          { label: "Throttle", value: metrics.boat.throttle.toFixed(2) },
+          { label: "Rudder", value: metrics.boat.rudder.toFixed(2) },
+          { label: "Heading", value: `${metrics.boat.headingDeg.toFixed(0)} deg` },
+          { label: "Pitch", value: `${metrics.boat.pitchDeg.toFixed(1)} deg` },
+          { label: "Roll", value: `${metrics.boat.rollDeg.toFixed(1)} deg` },
+          { label: "Capsized", value: metrics.boat.capsized ? "yes" : "no" },
+          {
+            label: "Boat Water",
+            value: metrics.boat.waterHeightM === null ? "n/a" : `${metrics.boat.waterHeightM.toFixed(2)} m`
+          },
+          {
+            label: "Boat XZ",
+            value: `${metrics.boat.position.x.toFixed(1)}, ${metrics.boat.position.z.toFixed(1)}`
+          },
+          { label: "Boat Y", value: metrics.boat.position.y.toFixed(2) }
+        ]
+  );
+
+  const firstPersonCards = $derived(
+    metrics.firstPerson === null
+      ? [{ label: "FPS", value: "off" }]
+      : [
+          {
+            label: "Local XZ",
+            value: `${metrics.firstPerson.localX.toFixed(2)}, ${metrics.firstPerson.localZ.toFixed(2)}`
+          },
+          { label: "Local Y", value: metrics.firstPerson.localY.toFixed(2) },
+          { label: "Yaw", value: `${metrics.firstPerson.yawDeg.toFixed(0)} deg` },
+          { label: "Pitch", value: `${metrics.firstPerson.pitchDeg.toFixed(0)} deg` },
+          { label: "On Ground", value: metrics.firstPerson.onGround ? "yes" : "no" }
+        ]
+  );
+
+  function toggleFirstPerson() {
+    patch({ firstPerson: !settings.firstPerson, boatUseModel: true });
+  }
+
   function checked(event: Event): boolean {
     return (event.currentTarget as HTMLInputElement).checked;
   }
@@ -126,7 +177,7 @@
   }
 </script>
 
-<aside class="pointer-events-auto w-[360px] max-w-[calc(100vw-24px)] rounded border border-white/15 bg-slate-950/82 p-3 text-[12px] leading-tight text-slate-100 shadow-2xl backdrop-blur">
+<aside class="pointer-events-auto max-h-[calc(100vh-64px)] w-[360px] max-w-[calc(100vw-24px)] overflow-y-auto rounded border border-white/15 bg-slate-950/82 p-3 text-[12px] leading-tight text-slate-100 shadow-2xl backdrop-blur">
   <div class="mb-3 flex items-start justify-between gap-3">
     <div>
       <h1 class="text-sm font-semibold tracking-normal">Ocean Prototype</h1>
@@ -299,8 +350,56 @@
     {/each}
   </section>
 
+  <section class="mt-3 rounded border border-orange-300/25 bg-orange-950/20 p-2">
+    <div class="mb-2 flex items-center justify-between gap-2">
+      <h2 class="text-[11px] font-semibold uppercase tracking-normal text-orange-200">Boat</h2>
+      <div class="flex items-center gap-2">
+        <label class="!mb-0 flex min-h-6 items-center gap-1 rounded border border-orange-200/20 bg-orange-200/10 px-2 py-1">
+          <span class="!mb-0 !text-[10px] !text-orange-100">Model</span>
+          <input type="checkbox" checked={settings.boatUseModel} onchange={(event) => patch({ boatUseModel: checked(event) })} />
+        </label>
+        <label class="!mb-0 flex min-h-6 items-center gap-1 rounded border border-orange-200/20 bg-orange-200/10 px-2 py-1">
+          <span class="!mb-0 !text-[10px] !text-orange-100">Luces (O)</span>
+          <input type="checkbox" checked={settings.boatLightsOn} onchange={(event) => patch({ boatLightsOn: checked(event) })} />
+        </label>
+        <button
+          class="rounded border px-2 py-1 text-[10px] uppercase hover:bg-orange-200/20 {settings.firstPerson
+            ? 'border-orange-100 bg-orange-200/25 text-orange-50'
+            : 'border-orange-200/20 bg-orange-200/10 text-orange-100'}"
+          type="button"
+          onclick={toggleFirstPerson}
+        >
+          Primera persona
+        </button>
+        <button
+          class="rounded border border-orange-200/20 bg-orange-200/10 px-2 py-1 text-[10px] uppercase text-orange-100 hover:bg-orange-200/20"
+          type="button"
+          onclick={onResetBoat}
+        >
+          Reset
+        </button>
+      </div>
+    </div>
+    <section class="grid grid-cols-2 gap-2">
+      {#each boatCards as metric}
+        <div class="rounded border border-white/10 bg-white/[0.045] p-2">
+          <div class="text-[10px] uppercase text-slate-500">{metric.label}</div>
+          <div class="mt-1 truncate font-mono text-[12px] text-slate-100">{metric.value}</div>
+        </div>
+      {/each}
+    </section>
+    <section class="mt-2 grid grid-cols-2 gap-2">
+      {#each firstPersonCards as metric}
+        <div class="rounded border border-white/10 bg-white/[0.045] p-2">
+          <div class="text-[10px] uppercase text-slate-500">{metric.label}</div>
+          <div class="mt-1 truncate font-mono text-[12px] text-slate-100">{metric.value}</div>
+        </div>
+      {/each}
+    </section>
+  </section>
+
   <p class="mt-3 text-[11px] leading-snug text-slate-400">
-    Click canvas for pointer lock. WASD move, Space/C vertical, Shift boost, Esc releases.
+    Debug: ` muestra/oculta el menú. Click canvas for pointer lock. Free camera: WASD move, Space/C vertical, Shift boost, Esc releases. Boat: I/K throttle, J/L rudder, O luces. Primera persona: WASD caminar, mouse mirar, Esc sale del modo.
   </p>
 </aside>
 

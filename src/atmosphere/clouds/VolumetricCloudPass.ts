@@ -10,6 +10,7 @@ import {
   fract,
   max,
   mix,
+  perspectiveDepthToViewZ,
   positionGeometry,
   smoothstep,
   sqrt,
@@ -36,6 +37,89 @@ const CIRRUS_ALTITUDE = 8000;
 const BASE_NOISE_METERS = 8000;
 const DETAIL_NOISE_METERS = 950;
 
+function sceneDepthUvFromScreenUv(screenUv: NodeRef): NodeRef {
+  // WebGPU depth render targets are sampled with the opposite vertical origin
+  // from the fullscreen screen UV used to reconstruct camera rays here.
+  return vec2(screenUv.x, float(1).sub(screenUv.y));
+}
+
+function reconstructViewRay(
+  screenUv: NodeRef,
+  inverseProjection: NodeRef,
+  cameraWorld: NodeRef
+): { viewDirection: NodeRef; worldDirection: NodeRef } {
+  const ndc = screenUv.mul(2).sub(1);
+  const viewPosition: NodeRef = inverseProjection.mul(vec4(ndc.x, ndc.y, 0.5, 1));
+  const viewDirection = viewPosition.xyz.div(viewPosition.w).normalize();
+  const worldDirection: NodeRef = cameraWorld.mul(vec4(viewDirection, 0)).xyz.normalize();
+  return { viewDirection, worldDirection };
+}
+
+function reconstructSceneDistance(
+  screenUv: NodeRef,
+  viewDirection: NodeRef,
+  sceneDepthTexture: NodeRef,
+  cameraNear: NodeRef,
+  cameraFar: NodeRef
+): { rawDepth: NodeRef; viewZ: NodeRef; distance: NodeRef } {
+  const depthUv = sceneDepthUvFromScreenUv(screenUv);
+  const rawDepth: NodeRef = sceneDepthTexture.sample(depthUv).r;
+  const viewZ: NodeRef = perspectiveDepthToViewZ(rawDepth, cameraNear, cameraFar);
+  return {
+    rawDepth,
+    viewZ,
+    distance: viewZ.div(viewDirection.z).max(0)
+  };
+}
+
+/** Ray/sphere intersection as vec3(near, far, discriminant). */
+function raySphereIntersection(rayOrigin: NodeRef, rayDirection: NodeRef, radius: NodeRef): NodeRef {
+  const b = dot(rayOrigin, rayDirection);
+  const c = dot(rayOrigin, rayOrigin).sub(radius.mul(radius));
+  const discriminant = b.mul(b).sub(c);
+  const root = sqrt(max(discriminant, 0));
+  return vec3(b.negate().sub(root), b.negate().add(root), discriminant);
+}
+
+/**
+ * Returns the exact [entry, exit] interval through the spherical cloud layer.
+ * A negative exit marks a ray that never reaches the layer.
+ */
+function cloudShellInterval(
+  cameraAltitude: NodeRef,
+  worldDirection: NodeRef,
+  cloudBase: NodeRef,
+  cloudThickness: NodeRef
+): { entry: NodeRef; exit: NodeRef } {
+  const earthCenterOffset = vec3(0, cameraAltitude.add(EARTH_RADIUS), 0);
+  const baseRadius = float(EARTH_RADIUS).add(cloudBase);
+  const topRadius = baseRadius.add(cloudThickness);
+  const baseHit: NodeRef = raySphereIntersection(earthCenterOffset, worldDirection, baseRadius);
+  const topHit: NodeRef = raySphereIntersection(earthCenterOffset, worldDirection, topRadius);
+  const cameraRadius = cameraAltitude.add(EARTH_RADIUS);
+  const entry = float(0).toVar();
+  const exit = float(-1).toVar();
+
+  If(cameraRadius.lessThan(baseRadius), () => {
+    entry.assign(baseHit.y.max(0));
+    exit.assign(topHit.y);
+  })
+    .ElseIf(cameraRadius.greaterThan(topRadius), () => {
+      If(topHit.z.greaterThan(0).and(topHit.x.greaterThan(0)), () => {
+        entry.assign(topHit.x);
+        const hitsBase = baseHit.z.greaterThan(0).and(baseHit.x.greaterThan(0));
+        exit.assign(hitsBase.select(baseHit.x, topHit.y));
+      });
+    })
+    .Else(() => {
+      entry.assign(0);
+      const hitsBase = baseHit.z.greaterThan(0).and(baseHit.x.greaterThan(0));
+      exit.assign(hitsBase.select(baseHit.x, topHit.y));
+    });
+
+  return { entry, exit };
+}
+
 export type CloudQualityConfig = {
   /** Render target scale relative to the canvas (0.25 = quarter res). */
   resolutionScale: number;
@@ -54,6 +138,8 @@ export type CloudLightingInput = {
   keyLightDir: THREE.Vector3;
   keyLightColor: THREE.Color;
   keyLightIntensity: number;
+  /** 0 in daylight, 1 at full night. Controls the cinematic lunar response. */
+  nightFactor: number;
   ambientTop: THREE.Color;
   ambientBottom: THREE.Color;
   fogColor: THREE.Color;
@@ -76,16 +162,23 @@ export type LightningLightInput = {
   intensity: number;
 };
 
+export type SceneDepthInput = {
+  texture: THREE.DepthTexture;
+  width: number;
+  height: number;
+};
+
 /**
  * Half-resolution raymarched volumetric clouds (Schneider/Nubis density model,
  * Frostbite-style energy-conserving integration with a Wrenninge multi-scatter
  * approximation), with an in-pass temporal exponential accumulation driven by
  * direction-based reprojection, plus an analytic high-altitude cirrus layer.
  *
- * The resolved buffer stores premultiplied HDR radiance in RGB and view
- * transmittance in A, and is composited over the forward frame by a fullscreen
- * mesh using (src * 1 + dst * srcAlpha) blending. Ocean occlusion is handled
- * analytically inside the march by clamping rays against the sea plane.
+ * The resolved buffer stores only cloud radiance/transmittance: premultiplied
+ * HDR radiance in RGB and view transmittance in A. The analytic sea-plane
+ * clamp avoids unnecessary downward marching, while authoritative occlusion
+ * from meshes and FFT-displaced waves is applied later in the fullscreen
+ * composite so moving geometry never contaminates the cloud history.
  */
 export class VolumetricCloudPass {
   readonly compositeMesh: THREE.Mesh;
@@ -124,6 +217,7 @@ export class VolumetricCloudPass {
   // Lighting
   private readonly uKeyLightDir: AnyUniform<THREE.Vector3> = uniform(new THREE.Vector3(0, 1, 0)) as any;
   private readonly uKeyLightRadiance: AnyUniform<THREE.Color> = uniform(new THREE.Color(1, 1, 1)) as any;
+  private readonly uNightFactor: AnyUniform<number> = uniform(0) as any;
   private readonly uAmbientTop: AnyUniform<THREE.Color> = uniform(new THREE.Color(0.4, 0.5, 0.6)) as any;
   private readonly uAmbientBottom: AnyUniform<THREE.Color> = uniform(new THREE.Color(0.2, 0.25, 0.3)) as any;
   private readonly uFogColor: AnyUniform<THREE.Color> = uniform(new THREE.Color(0.5, 0.6, 0.65)) as any;
@@ -141,7 +235,13 @@ export class VolumetricCloudPass {
   private readonly uDebugMode: AnyUniform<number> = uniform(0) as any;
   private readonly historyTexNode: NodeRef;
   private readonly resolvedTexNode: NodeRef;
+  private readonly sceneDepthPlaceholder = new THREE.DepthTexture(1, 1);
+  private readonly sceneDepthTexNode: NodeRef;
   private weatherStability = 1;
+  private readonly uCameraNear: AnyUniform<number> = uniform(0.1) as any;
+  private readonly uCameraFar: AnyUniform<number> = uniform(60000) as any;
+  private readonly uHasSceneDepth: AnyUniform<number> = uniform(0) as any;
+  private readonly uDepthBiasMeters: AnyUniform<number> = uniform(1.25) as any;
 
   constructor(
     noise: CloudNoiseTextures,
@@ -153,6 +253,7 @@ export class VolumetricCloudPass {
 
     this.historyTexNode = texture(this.targets[0].texture);
     this.resolvedTexNode = texture(this.targets[0].texture);
+    this.sceneDepthTexNode = texture(this.sceneDepthPlaceholder);
 
     this.material = new THREE.NodeMaterial();
     this.material.name = "volumetric-cloud-raymarch";
@@ -207,6 +308,7 @@ export class VolumetricCloudPass {
   updateLighting(input: CloudLightingInput): void {
     this.uKeyLightDir.value.copy(input.keyLightDir).normalize();
     this.uKeyLightRadiance.value.copy(input.keyLightColor).multiplyScalar(input.keyLightIntensity);
+    this.uNightFactor.value = THREE.MathUtils.clamp(input.nightFactor, 0, 1);
     this.uAmbientTop.value.copy(input.ambientTop);
     this.uAmbientBottom.value.copy(input.ambientBottom);
     this.uFogColor.value.copy(input.fogColor);
@@ -234,12 +336,17 @@ export class VolumetricCloudPass {
     renderer: THREE.WebGPURenderer,
     camera: THREE.PerspectiveCamera,
     originOffset: { x: number; z: number },
-    weatherMap: WeatherMap
+    weatherMap: WeatherMap,
+    sceneDepth: SceneDepthInput | null = null
   ): void {
     this.uCamPos.value.copy(camera.position);
     this.uCamAbsXZ.value.set(camera.position.x + originOffset.x, camera.position.z + originOffset.z);
     this.uInvProj.value.copy(camera.projectionMatrixInverse);
     this.uCamWorld.value.copy(camera.matrixWorld);
+    this.uCameraNear.value = camera.near;
+    this.uCameraFar.value = camera.far;
+    this.uHasSceneDepth.value = sceneDepth ? 1 : 0;
+    this.sceneDepthTexNode.value = sceneDepth?.texture ?? this.sceneDepthPlaceholder;
     this.uWindOffset.value.copy(weatherMap.windOffsetMeters);
     this.uFrame.value = this.frameIndex % 1024;
 
@@ -278,6 +385,7 @@ export class VolumetricCloudPass {
   dispose(): void {
     this.targets.forEach((target) => target.dispose());
     this.material.dispose();
+    this.sceneDepthPlaceholder.dispose();
     this.compositeMesh.geometry.dispose();
     (this.compositeMesh.material as THREE.Material).dispose();
     this.compositeMesh.removeFromParent();
@@ -314,16 +422,47 @@ export class VolumetricCloudPass {
     material.vertexNode = vec4(positionGeometry.xy, 0.5, 1);
 
     const resolved = this.resolvedTexNode;
+    const sceneDepthTex = this.sceneDepthTexNode;
+    const uInvProj = this.uInvProj;
+    const uCamWorld = this.uCamWorld;
+    const uCamPos = this.uCamPos;
+    const uCloudBase = this.uCloudBase;
+    const uCloudThickness = this.uCloudThickness;
+    const uCameraNear = this.uCameraNear;
+    const uCameraFar = this.uCameraFar;
+    const uHasSceneDepth = this.uHasSceneDepth;
+    const uDepthBias = this.uDepthBiasMeters;
+    const uDebugMode = this.uDebugMode;
+
     material.fragmentNode = Fn(() => {
       const sampleUV: NodeRef = uv();
       const clouds: NodeRef = resolved.sample(sampleUV);
-      return vec4(clouds.rgb, clouds.a);
+      const ray = reconstructViewRay(sampleUV, uInvProj, uCamWorld);
+      const sceneDepth = reconstructSceneDistance(
+        sampleUV,
+        ray.viewDirection,
+        sceneDepthTex,
+        uCameraNear,
+        uCameraFar
+      );
+      const validSceneDepth = uHasSceneDepth.greaterThan(0.5).and(sceneDepth.rawDepth.lessThan(0.999999));
+      const cloudInterval = cloudShellInterval(uCamPos.y, ray.worldDirection, uCloudBase, uCloudThickness);
+      const hasCloud = clouds.a.lessThan(0.999);
+      const edgeFade = validSceneDepth
+        .and(hasCloud)
+        .select(
+          smoothstep(float(0.35), float(6), sceneDepth.distance.sub(cloudInterval.entry).add(uDepthBias)),
+          float(1)
+        );
+      const finalFade = uDebugMode.greaterThan(0.5).select(float(1), edgeFade);
+      return vec4(clouds.rgb.mul(finalFade), mix(float(1), clouds.a, finalFade));
     })();
 
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
     mesh.name = "Volumetric cloud composite";
     mesh.frustumCulled = false;
     mesh.renderOrder = 10000;
+    mesh.userData.depthPass = "exclude";
     return mesh;
   }
 
@@ -341,6 +480,10 @@ export class VolumetricCloudPass {
     const uInvProj = this.uInvProj;
     const uCamWorld = this.uCamWorld;
     const uPrevProjView = this.uPrevProjView;
+    const uCameraNear = this.uCameraNear;
+    const uCameraFar = this.uCameraFar;
+    const uHasSceneDepth = this.uHasSceneDepth;
+    const uDepthBias = this.uDepthBiasMeters;
     const uCloudBase = this.uCloudBase;
     const uCloudThickness = this.uCloudThickness;
     const uDensityMult = this.uDensityMult;
@@ -351,6 +494,7 @@ export class VolumetricCloudPass {
     const uWindDir = this.uWindDir;
     const uKeyLightDir = this.uKeyLightDir;
     const uKeyLightRadiance = this.uKeyLightRadiance;
+    const uNightFactor = this.uNightFactor;
     const uAmbientTop = this.uAmbientTop;
     const uAmbientBottom = this.uAmbientBottom;
     const uFogColor = this.uFogColor;
@@ -363,6 +507,7 @@ export class VolumetricCloudPass {
     const uResolution = this.uResolution;
     const uDebugMode = this.uDebugMode;
     const historyTex = this.historyTexNode;
+    const sceneDepthTex = this.sceneDepthTexNode;
 
     const MARCH_STEPS = quality.marchSteps;
     const LIGHT_STEPS = quality.lightSteps;
@@ -448,18 +593,6 @@ export class VolumetricCloudPass {
       return vec2(cloud.mul(heightDensity), precip.mul(float(1).sub(clearAir.mul(0.55))));
     };
 
-    /** Ray-sphere against earth-centered sphere. ro is relative to earth center. */
-    const raySphere = (roc: NodeRef, rd: NodeRef, radius: NodeRef): NodeRef => {
-      const b = dot(roc, rd);
-      const c = dot(roc, roc).sub(radius.mul(radius));
-      const disc = b.mul(b).sub(c);
-      const s = sqrt(max(disc, 0));
-      const near = b.negate().sub(s);
-      const far = b.negate().add(s);
-      // miss flagged by far < near via disc sign
-      return vec3(near, far, disc);
-    };
-
     const henyeyGreenstein = (cosTheta: NodeRef, g: number): NodeRef => {
       const g2 = g * g;
       const denom = float(1 + g2).sub(cosTheta.mul(2 * g)).pow(1.5).max(1e-4);
@@ -468,7 +601,6 @@ export class VolumetricCloudPass {
 
     return Fn(() => {
       const screenPos: NodeRef = uv();
-      const ndc = screenPos.mul(2).sub(1);
       const debugWeather: NodeRef = weatherTex.sample(screenPos).level(float(0));
       const seamEdge = float(1)
         .sub(smoothstep(float(0.0), float(0.012), screenPos.x))
@@ -503,44 +635,25 @@ export class VolumetricCloudPass {
         });
 
       // Reconstruct the world-space view ray from the scene camera matrices
-      const viewDir4: NodeRef = uInvProj.mul(vec4(ndc.x, ndc.y, 0.5, 1));
-      const viewDir = viewDir4.xyz.div(viewDir4.w);
-      const worldDir: NodeRef = uCamWorld.mul(vec4(viewDir, 0)).xyz.normalize().toVar();
+      const ray = reconstructViewRay(screenPos, uInvProj, uCamWorld);
+      const worldDir: NodeRef = ray.worldDirection.toVar();
+      const sceneDepth = reconstructSceneDistance(
+        screenPos,
+        ray.viewDirection,
+        sceneDepthTex,
+        uCameraNear,
+        uCameraFar
+      );
+      const validSceneDepth = uHasSceneDepth.greaterThan(0.5).and(sceneDepth.rawDepth.lessThan(0.999999));
 
       // Local frame: origin at sea level directly below the camera
       const camAltitude = uCamPos.y;
       const earthCenterOffset = vec3(0, camAltitude.add(EARTH_RADIUS), 0);
 
-      const rBase = float(EARTH_RADIUS).add(uCloudBase);
-      const rTop = float(EARTH_RADIUS).add(uCloudBase).add(uCloudThickness);
-
-      const hitBase: NodeRef = raySphere(earthCenterOffset, worldDir, rBase);
-      const hitTop: NodeRef = raySphere(earthCenterOffset, worldDir, rTop);
-
-      const camRadius = camAltitude.add(EARTH_RADIUS);
-      const belowLayer = camRadius.lessThan(rBase);
-      const aboveLayer = camRadius.greaterThan(rTop);
-
       // March interval [start, end] through the cloud shell
-      const start = float(0).toVar();
-      const end = float(-1).toVar();
-
-      If(belowLayer, () => {
-        start.assign(hitBase.y.max(0));
-        end.assign(hitTop.y);
-      })
-        .ElseIf(aboveLayer, () => {
-          If(hitTop.z.greaterThan(0).and(hitTop.x.greaterThan(0)), () => {
-            start.assign(hitTop.x);
-            const hitsBase = hitBase.z.greaterThan(0).and(hitBase.x.greaterThan(0));
-            end.assign(hitsBase.select(hitBase.x, hitTop.y));
-          });
-        })
-        .Else(() => {
-          start.assign(0);
-          const hitsBase = hitBase.z.greaterThan(0).and(hitBase.x.greaterThan(0));
-          end.assign(hitsBase.select(hitBase.x, hitTop.y));
-        });
+      const cloudInterval = cloudShellInterval(camAltitude, worldDir, uCloudBase, uCloudThickness);
+      const start = cloudInterval.entry;
+      const end = cloudInterval.exit;
 
       // Analytic occlusion by the sea surface (plane y = 0)
       If(worldDir.y.lessThan(-0.0005), () => {
@@ -550,10 +663,11 @@ export class VolumetricCloudPass {
 
       const radiance = vec3(0).toVar();
       const transmittance = float(1).toVar();
+      const firstHitDistance = float(-1).toVar();
 
-      // Per-ray constants for lighting. A small isotropic floor keeps the
-      // sun-facing sides of clouds from going black when viewed down-sun.
-      const isoFloor = float(0.06);
+      // Daylight tolerates broad multiple scattering; moonlight needs a much
+      // higher key/fill ratio or dense clouds collapse into a flat grey card.
+      const isoFloor = mix(float(0.06), float(0.012), uNightFactor);
       const cosTheta = dot(worldDir, uKeyLightDir);
       const phase0 = henyeyGreenstein(cosTheta, 0.72)
         .mul(0.72)
@@ -606,6 +720,10 @@ export class VolumetricCloudPass {
           const precip = sampleResult.y;
 
           If(density.greaterThan(0.001), () => {
+            If(firstHitDistance.lessThan(0), () => {
+              firstHitDistance.assign(t);
+            });
+
             const sigmaT = density.mul(extinctionScale).mul(precip.mul(0.45).add(1));
 
             // Sun visibility: short march toward the key light
@@ -623,20 +741,61 @@ export class VolumetricCloudPass {
               sunOD.addAssign(ldensity.mul(extinctionScale).mul(0.72).mul(lightStepBase.mul(Math.pow(1.65, ls))));
             }
 
-            // Wrenninge multi-scattering octaves + powder edge darkening
+            // Wrenninge multi-scattering octaves + powder edge darkening.
+            // Secondary bounces are deliberately restrained at night so the
+            // lunar key can carve readable shadow pockets and silhouettes.
             const powder = float(1).sub(exp(sunOD.mul(-2))).mul(0.65).add(0.35);
+            const secondBounce = mix(float(0.55), float(0.2), uNightFactor);
+            const thirdBounce = mix(float(0.28), float(0.07), uNightFactor);
+            const lunarSilverLining = exp(sunOD.mul(-1.6))
+              .mul(henyeyGreenstein(cosTheta, 0.86))
+              .mul(uNightFactor)
+              .mul(0.1);
             const sunTerm = exp(sunOD.negate())
               .mul(phase0)
-              .add(exp(sunOD.mul(-0.42)).mul(phase1).mul(0.55))
-              .add(exp(sunOD.mul(-0.18)).mul(phase2).mul(0.28))
-              .mul(powder);
+              .add(exp(sunOD.mul(-0.42)).mul(phase1).mul(secondBounce))
+              .add(exp(sunOD.mul(-0.18)).mul(phase2).mul(thirdBounce))
+              .mul(powder)
+              .add(lunarSilverLining);
 
-            // Sky irradiance dominates the look of overcast clouds: strong
-            // top-lit gradient, darker toward the cloud belly.
+            // Approximate hemispherical sky visibility with a short upward
+            // density march. Unlike a height-only gradient this distinguishes
+            // exposed crowns from samples buried inside the same cloud mass.
             const hNorm = altitude.sub(uCloudBase).div(uCloudThickness).clamp(0, 1);
+            const ambientOD = float(0).toVar();
+            const ambientStep = uCloudThickness.mul(0.12).add(45);
+            // Two wide samples are enough for stable large-scale occlusion and
+            // keep the added cost bounded on the medium/low quality tiers.
+            for (let ao = 0; ao < 2; ao += 1) {
+              const aoDistance = ambientStep.mul(ao + 1);
+              const lateralSpread = aoDistance.mul(0.12 * (ao + 1));
+              const aoPos = pos.add(
+                vec3(
+                  uWindDir.x.mul(lateralSpread),
+                  aoDistance,
+                  uWindDir.y.mul(lateralSpread)
+                )
+              );
+              const aoAltitude = aoPos
+                .add(vec3(0, EARTH_RADIUS, 0))
+                .length()
+                .sub(EARTH_RADIUS);
+              const aoDensity: NodeRef = cloudDensity(aoPos.xz, aoAltitude, false).x;
+              ambientOD.addAssign(
+                aoDensity.mul(extinctionScale).mul(ambientStep).mul(0.72 + ao * 0.2)
+              );
+            }
+            const skyVisibility = exp(
+              ambientOD.negate().mul(mix(float(0.5), float(1.15), uNightFactor))
+            );
+            const ambientOcclusion = mix(
+              mix(float(0.42), float(1), skyVisibility),
+              mix(float(0.12), float(1), skyVisibility),
+              uNightFactor
+            );
             const ambient = mix(uAmbientBottom, uAmbientTop, hNorm).mul(
               mix(float(0.3), float(1), hNorm)
-            );
+            ).mul(ambientOcclusion);
 
             // Rain cells and storm bases are darker (soot-in-the-bottle look)
             const albedo = float(1)
@@ -674,7 +833,7 @@ export class VolumetricCloudPass {
       // ---------------------------------------------------------------- cirrus
       If(uCirrus.greaterThan(0.005).and(transmittance.greaterThan(0.01)), () => {
         const rCirrus = float(EARTH_RADIUS + CIRRUS_ALTITUDE);
-        const hitCirrus: NodeRef = raySphere(earthCenterOffset, worldDir, rCirrus);
+        const hitCirrus: NodeRef = raySphereIntersection(earthCenterOffset, worldDir, rCirrus);
         const tCirrus = hitCirrus.y;
         If(hitCirrus.z.greaterThan(0).and(tCirrus.greaterThan(0)).and(camAltitude.lessThan(CIRRUS_ALTITUDE)), () => {
           const posXZ = worldDir.xz.mul(tCirrus).add(uCamAbsXZ).sub(uWindOffset.mul(1.8));
@@ -682,9 +841,12 @@ export class VolumetricCloudPass {
           const across = dot(posXZ, vec2(uWindDir.y.negate(), uWindDir.x));
           const cuv = vec2(along.div(64000), across.div(15000));
           const streaks = cirrusFbm(cuv);
-          const cover = smoothstep(float(1).sub(uCirrus.mul(0.75)), float(1.25).sub(uCirrus.mul(0.75)), streaks.add(0.35))
+          const cover: NodeRef = smoothstep(float(1).sub(uCirrus.mul(0.75)), float(1.25).sub(uCirrus.mul(0.75)), streaks.add(0.35))
             .mul(uCirrus)
             .mul(smoothstep(float(0.0), float(0.06), worldDir.y));
+          If(cover.greaterThan(0.001).and(firstHitDistance.lessThan(0)), () => {
+            firstHitDistance.assign(tCirrus);
+          });
           const cirrusTrans = exp(cover.mul(-1.4));
           const phaseCirrus = henyeyGreenstein(cosTheta, 0.55).mul(12).add(0.35);
           const cirrusColor = uKeyLightRadiance
@@ -700,11 +862,18 @@ export class VolumetricCloudPass {
       const fogAmount: NodeRef = float(1).sub(exp(start.max(0).mul(uFogDensity.mul(-0.55))));
       radiance.assign(mix(radiance, uFogColor.mul(float(1).sub(transmittance)).mul(0.85), fogAmount));
 
-      // Horizon fill: low elevation rays get stratus haze so the sky seam is hidden
-      const horizonWeight: NodeRef = float(1).sub(smoothstep(float(0.004), float(0.16), worldDir.y));
+      // Horizon fill: only shallow sky rays get stratus haze. Looking down at
+      // the ocean must not composite cloud haze over the water foreground.
+      const aboveHorizonFade: NodeRef = smoothstep(float(-0.045), float(0.008), worldDir.y);
+      const horizonWeight: NodeRef = aboveHorizonFade.mul(
+        float(1).sub(smoothstep(float(0.004), float(0.16), worldDir.y))
+      );
       const horizonWeather: NodeRef = sampleWeather(uCamAbsXZ.add(worldDir.xz.mul(WEATHER_DOMAIN_METERS * 0.35)));
       const horizonLocal = horizonWeather.x.mul(float(1).sub(horizonWeather.w.mul(0.75))).clamp(0, 1);
       const horizonFill: NodeRef = uGlobalCoverage.mul(horizonLocal).mul(horizonWeight).mul(0.72).clamp(0, 1);
+      If(horizonFill.greaterThan(0.001).and(firstHitDistance.lessThan(0)), () => {
+        firstHitDistance.assign(start.max(0));
+      });
       const horizonColor = mix(uAmbientBottom, uFogColor, float(0.55));
       radiance.addAssign(horizonColor.mul(horizonFill).mul(0.48).mul(transmittance));
       transmittance.mulAssign(float(1).sub(horizonFill.mul(0.68)));
@@ -732,7 +901,24 @@ export class VolumetricCloudPass {
       const blend = uHistoryBlend.mul(inBounds.select(float(1), float(0)));
 
       const temporal = mix(current, clampedHistory, blend);
-      return uDebugMode.greaterThan(0.5).select(debugOut, temporal);
+      const cloudOcclusionMask = validSceneDepth
+        .and(firstHitDistance.greaterThan(0))
+        .and(sceneDepth.distance.add(uDepthBias).lessThan(firstHitDistance))
+        .select(float(1), float(0));
+      const finalDebug = debugOut.toVar();
+      If(uDebugMode.greaterThan(7.5).and(uDebugMode.lessThan(8.5)), () => {
+        finalDebug.assign(vec4(vec3(sceneDepth.viewZ.negate().div(8000).clamp(0, 1)), 0));
+      })
+        .ElseIf(uDebugMode.greaterThan(8.5).and(uDebugMode.lessThan(9.5)), () => {
+          finalDebug.assign(vec4(vec3(end.max(0).div(16000).clamp(0, 1)), 0));
+        })
+        .ElseIf(uDebugMode.greaterThan(9.5).and(uDebugMode.lessThan(10.5)), () => {
+          finalDebug.assign(vec4(vec3(firstHitDistance.max(0).div(16000).clamp(0, 1)), 0));
+        })
+        .ElseIf(uDebugMode.greaterThan(10.5), () => {
+          finalDebug.assign(vec4(cloudOcclusionMask, float(1).sub(cloudOcclusionMask), 0, 0));
+        });
+      return uDebugMode.greaterThan(0.5).select(finalDebug, temporal);
     })();
 
     /** Anisotropic FBM for cirrus streaks, stretched along the wind. */
@@ -771,5 +957,9 @@ const ATMOSPHERE_DEBUG_MODE_INDEX: Record<AtmosphereDebugMode, number> = {
   erosion: 4,
   densitySlice: 5,
   historyWeight: 6,
-  seamGrid: 7
+  seamGrid: 7,
+  sceneDepth: 8,
+  cloudRayEnd: 9,
+  cloudFirstHit: 10,
+  cloudOcclusionMask: 11
 };

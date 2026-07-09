@@ -131,6 +131,7 @@ export class OceanRenderer {
   private readonly mesh: THREE.Mesh;
   private readonly geometry: THREE.BufferGeometry;
   private readonly material: MeshPhysicalNodeMaterial;
+  private readonly depthMaterial: THREE.NodeMaterial;
   private readonly uniforms: OceanUniformNodes;
   private readonly derivativeNodes: NodeRef[];
   private visible = true;
@@ -143,12 +144,16 @@ export class OceanRenderer {
 
     const shader = createWaterMaterial(this.simulation, options.cloudShadows);
     this.material = shader.material;
+    this.depthMaterial = shader.depthMaterial;
     this.uniforms = shader.uniforms;
     this.derivativeNodes = shader.derivativeNodes;
 
     this.mesh = new THREE.Mesh(this.geometry, this.material);
     this.mesh.name = "FFT spectral ocean surface";
     this.mesh.frustumCulled = false;
+    // SceneDepthPass uses this lightweight material so cloud composition sees
+    // the exact FFT-displaced surface without evaluating the water PBR shader.
+    this.mesh.customDepthMaterial = this.depthMaterial;
     // Receives the sun light's custom cloud-shadow node (projected cloud map)
     this.mesh.receiveShadow = true;
     options.scene.add(this.mesh);
@@ -203,6 +208,7 @@ export class OceanRenderer {
   dispose(): void {
     this.geometry.dispose();
     this.material.dispose();
+    this.depthMaterial.dispose();
     this.mesh.removeFromParent();
   }
 
@@ -230,6 +236,7 @@ function createWaterMaterial(
   cloudShadows: CloudShadowMap | null
 ): {
   material: MeshPhysicalNodeMaterial;
+  depthMaterial: THREE.NodeMaterial;
   uniforms: OceanUniformNodes;
   derivativeNodes: NodeRef[];
 } {
@@ -281,7 +288,16 @@ function createWaterMaterial(
   });
   displacement = displacement.mul(uniforms.displacementToggle);
 
-  material.positionNode = positionGeometry.add(displacement);
+  const displacedPosition = positionGeometry.add(displacement);
+  material.positionNode = displacedPosition;
+
+  const depthMaterial = new THREE.NodeMaterial();
+  depthMaterial.name = "FFT spectral ocean depth";
+  depthMaterial.colorWrite = false;
+  depthMaterial.depthTest = true;
+  depthMaterial.depthWrite = true;
+  depthMaterial.positionNode = displacedPosition;
+  depthMaterial.fragmentNode = vec4(0, 0, 0, 1);
 
   const vHeight: NodeRef = vertexStage(displacement.y);
   const vSampleXZ: NodeRef = vertexStage(sampleXZ);
@@ -396,5 +412,5 @@ function createWaterMaterial(
     .clamp(0, 1);
   material.outputNode = mix(output, vec4(debugColor, 1), debugBlend);
 
-  return { material, uniforms, derivativeNodes };
+  return { material, depthMaterial, uniforms, derivativeNodes };
 }

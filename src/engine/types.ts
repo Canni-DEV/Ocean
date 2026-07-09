@@ -10,7 +10,11 @@ export type AtmosphereDebugMode =
   | "erosion"
   | "densitySlice"
   | "historyWeight"
-  | "seamGrid";
+  | "seamGrid"
+  | "sceneDepth"
+  | "cloudRayEnd"
+  | "cloudFirstHit"
+  | "cloudOcclusionMask";
 
 export type DebugRenderMode =
   | "final"
@@ -88,6 +92,27 @@ export type CameraDebugState = {
   pitchDeg: number;
 };
 
+export type BoatDebugState = {
+  position: { x: number; y: number; z: number };
+  speedMs: number;
+  headingDeg: number;
+  pitchDeg: number;
+  rollDeg: number;
+  throttle: number;
+  rudder: number;
+  capsized: boolean;
+  waterHeightM: number | null;
+};
+
+export type FirstPersonDebugState = {
+  localX: number;
+  localY: number;
+  localZ: number;
+  yawDeg: number;
+  pitchDeg: number;
+  onGround: boolean;
+};
+
 export type EngineMetrics = {
   backend: "webgpu";
   fps: number;
@@ -96,9 +121,12 @@ export type EngineMetrics = {
   gpuMs: number | null;
   oceanComputeMs: number | null;
   cloudComputeMs: number | null;
+  depthPrepassMs: number | null;
   seaLevelAtCameraM: number | null;
   worldTimeHours: number;
   camera: CameraDebugState;
+  boat: BoatDebugState | null;
+  firstPerson: FirstPersonDebugState | null;
   originOffsetMeters: { x: number; z: number };
   status: "booting" | "running" | "error";
   error: string | null;
@@ -134,4 +162,8 @@ export type DebugSettings = {
   cloudCoverageBias: number;
   cloudDensityBias: number;
   exposureBias: number;
+  boatUseModel: boolean;
+  /** Master toggle for all boat lights (spotlights). Off by default. */
+  boatLightsOn: boolean;
+  firstPerson: boolean;
 };
