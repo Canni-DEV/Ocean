@@ -260,13 +260,29 @@ export class AtmosphereSystem {
 
     if (cloudsEnabled) {
       const daylight = THREE.MathUtils.smoothstep(sun.y, -0.08, 0.42);
+      const nightFactor = 1 - daylight;
       const keyIsSun = daylight > 0.04;
       const keyDir = keyIsSun ? sun : moon;
       const keyColor = new THREE.Color(keyIsSun ? environment.sunColor : environment.moonColor);
       const keyIntensity = (keyIsSun
         ? THREE.MathUtils.lerp(0.25, 3.4, daylight)
-        : 0.12 * environment.celestial.moonVisibility + 0.02) *
+        : THREE.MathUtils.lerp(0.28, 0.8, environment.celestial.moonVisibility)) *
         (keyIsSun ? environment.celestial.sunDirectMask : environment.celestial.moonDirectMask);
+
+      // Preserve the HDR daytime response, but at night lower the broad sky
+      // fill and fog radiance so moonlight — not ambient grey — defines shape.
+      const ambientTopScale = THREE.MathUtils.lerp(0.72, 5.2, daylight);
+      const ambientBottomScale = THREE.MathUtils.lerp(0.48, 3.4, daylight);
+      const fogRadianceScale = THREE.MathUtils.lerp(0.5, 2.2, daylight);
+      const ambientTop = new THREE.Color(environment.skyZenithColor)
+        .multiplyScalar(ambientTopScale)
+        .lerp(new THREE.Color("#07152d"), nightFactor * 0.28);
+      const ambientBottom = new THREE.Color(environment.skyHorizonColor)
+        .multiplyScalar(ambientBottomScale)
+        .lerp(new THREE.Color("#030814"), nightFactor * 0.42);
+      const cloudFogColor = new THREE.Color(environment.fogColor)
+        .multiplyScalar(fogRadianceScale)
+        .lerp(new THREE.Color("#040b19"), nightFactor * 0.38);
 
       this.cloudPass.updateWeather({
         cloudBaseMeters: weather.cloudBaseMeters,
@@ -282,9 +298,10 @@ export class AtmosphereSystem {
         keyLightDir: keyDir,
         keyLightColor: keyColor,
         keyLightIntensity: keyIntensity,
-        ambientTop: new THREE.Color(environment.skyZenithColor).multiplyScalar(5.2),
-        ambientBottom: new THREE.Color(environment.skyHorizonColor).multiplyScalar(3.4),
-        fogColor: new THREE.Color(environment.fogColor).multiplyScalar(2.2),
+        nightFactor,
+        ambientTop,
+        ambientBottom,
+        fogColor: cloudFogColor,
         fogDensity: environment.fogDensity
       });
       this.cloudPass.updateLightning(this.lightning.getCloudLights());

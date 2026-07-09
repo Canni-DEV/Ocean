@@ -138,6 +138,8 @@ export type CloudLightingInput = {
   keyLightDir: THREE.Vector3;
   keyLightColor: THREE.Color;
   keyLightIntensity: number;
+  /** 0 in daylight, 1 at full night. Controls the cinematic lunar response. */
+  nightFactor: number;
   ambientTop: THREE.Color;
   ambientBottom: THREE.Color;
   fogColor: THREE.Color;
@@ -215,6 +217,7 @@ export class VolumetricCloudPass {
   // Lighting
   private readonly uKeyLightDir: AnyUniform<THREE.Vector3> = uniform(new THREE.Vector3(0, 1, 0)) as any;
   private readonly uKeyLightRadiance: AnyUniform<THREE.Color> = uniform(new THREE.Color(1, 1, 1)) as any;
+  private readonly uNightFactor: AnyUniform<number> = uniform(0) as any;
   private readonly uAmbientTop: AnyUniform<THREE.Color> = uniform(new THREE.Color(0.4, 0.5, 0.6)) as any;
   private readonly uAmbientBottom: AnyUniform<THREE.Color> = uniform(new THREE.Color(0.2, 0.25, 0.3)) as any;
   private readonly uFogColor: AnyUniform<THREE.Color> = uniform(new THREE.Color(0.5, 0.6, 0.65)) as any;
@@ -305,6 +308,7 @@ export class VolumetricCloudPass {
   updateLighting(input: CloudLightingInput): void {
     this.uKeyLightDir.value.copy(input.keyLightDir).normalize();
     this.uKeyLightRadiance.value.copy(input.keyLightColor).multiplyScalar(input.keyLightIntensity);
+    this.uNightFactor.value = THREE.MathUtils.clamp(input.nightFactor, 0, 1);
     this.uAmbientTop.value.copy(input.ambientTop);
     this.uAmbientBottom.value.copy(input.ambientBottom);
     this.uFogColor.value.copy(input.fogColor);
@@ -490,6 +494,7 @@ export class VolumetricCloudPass {
     const uWindDir = this.uWindDir;
     const uKeyLightDir = this.uKeyLightDir;
     const uKeyLightRadiance = this.uKeyLightRadiance;
+    const uNightFactor = this.uNightFactor;
     const uAmbientTop = this.uAmbientTop;
     const uAmbientBottom = this.uAmbientBottom;
     const uFogColor = this.uFogColor;
@@ -660,9 +665,9 @@ export class VolumetricCloudPass {
       const transmittance = float(1).toVar();
       const firstHitDistance = float(-1).toVar();
 
-      // Per-ray constants for lighting. A small isotropic floor keeps the
-      // sun-facing sides of clouds from going black when viewed down-sun.
-      const isoFloor = float(0.06);
+      // Daylight tolerates broad multiple scattering; moonlight needs a much
+      // higher key/fill ratio or dense clouds collapse into a flat grey card.
+      const isoFloor = mix(float(0.06), float(0.012), uNightFactor);
       const cosTheta = dot(worldDir, uKeyLightDir);
       const phase0 = henyeyGreenstein(cosTheta, 0.72)
         .mul(0.72)
@@ -736,20 +741,61 @@ export class VolumetricCloudPass {
               sunOD.addAssign(ldensity.mul(extinctionScale).mul(0.72).mul(lightStepBase.mul(Math.pow(1.65, ls))));
             }
 
-            // Wrenninge multi-scattering octaves + powder edge darkening
+            // Wrenninge multi-scattering octaves + powder edge darkening.
+            // Secondary bounces are deliberately restrained at night so the
+            // lunar key can carve readable shadow pockets and silhouettes.
             const powder = float(1).sub(exp(sunOD.mul(-2))).mul(0.65).add(0.35);
+            const secondBounce = mix(float(0.55), float(0.2), uNightFactor);
+            const thirdBounce = mix(float(0.28), float(0.07), uNightFactor);
+            const lunarSilverLining = exp(sunOD.mul(-1.6))
+              .mul(henyeyGreenstein(cosTheta, 0.86))
+              .mul(uNightFactor)
+              .mul(0.1);
             const sunTerm = exp(sunOD.negate())
               .mul(phase0)
-              .add(exp(sunOD.mul(-0.42)).mul(phase1).mul(0.55))
-              .add(exp(sunOD.mul(-0.18)).mul(phase2).mul(0.28))
-              .mul(powder);
+              .add(exp(sunOD.mul(-0.42)).mul(phase1).mul(secondBounce))
+              .add(exp(sunOD.mul(-0.18)).mul(phase2).mul(thirdBounce))
+              .mul(powder)
+              .add(lunarSilverLining);
 
-            // Sky irradiance dominates the look of overcast clouds: strong
-            // top-lit gradient, darker toward the cloud belly.
+            // Approximate hemispherical sky visibility with a short upward
+            // density march. Unlike a height-only gradient this distinguishes
+            // exposed crowns from samples buried inside the same cloud mass.
             const hNorm = altitude.sub(uCloudBase).div(uCloudThickness).clamp(0, 1);
+            const ambientOD = float(0).toVar();
+            const ambientStep = uCloudThickness.mul(0.12).add(45);
+            // Two wide samples are enough for stable large-scale occlusion and
+            // keep the added cost bounded on the medium/low quality tiers.
+            for (let ao = 0; ao < 2; ao += 1) {
+              const aoDistance = ambientStep.mul(ao + 1);
+              const lateralSpread = aoDistance.mul(0.12 * (ao + 1));
+              const aoPos = pos.add(
+                vec3(
+                  uWindDir.x.mul(lateralSpread),
+                  aoDistance,
+                  uWindDir.y.mul(lateralSpread)
+                )
+              );
+              const aoAltitude = aoPos
+                .add(vec3(0, EARTH_RADIUS, 0))
+                .length()
+                .sub(EARTH_RADIUS);
+              const aoDensity: NodeRef = cloudDensity(aoPos.xz, aoAltitude, false).x;
+              ambientOD.addAssign(
+                aoDensity.mul(extinctionScale).mul(ambientStep).mul(0.72 + ao * 0.2)
+              );
+            }
+            const skyVisibility = exp(
+              ambientOD.negate().mul(mix(float(0.5), float(1.15), uNightFactor))
+            );
+            const ambientOcclusion = mix(
+              mix(float(0.42), float(1), skyVisibility),
+              mix(float(0.12), float(1), skyVisibility),
+              uNightFactor
+            );
             const ambient = mix(uAmbientBottom, uAmbientTop, hNorm).mul(
               mix(float(0.3), float(1), hNorm)
-            );
+            ).mul(ambientOcclusion);
 
             // Rain cells and storm bases are darker (soot-in-the-bottle look)
             const albedo = float(1)
