@@ -10,16 +10,21 @@ export type RopeRendererConfig = {
   weightRadius: number;
 };
 
+/** Solid celeste for line mode — saturated enough to survive scene exposure. */
+const ROPE_LINE_COLOR = 0x6b96b3;
+
 export class RopeRenderer {
   readonly group = new THREE.Group();
 
+  private readonly ropeTexture = createBoatRopeBraidTexture();
   private readonly ropeMaterial = new THREE.MeshStandardMaterial({
-    color: 0x3a2f24,
-    roughness: 0.92,
+    color: 0xffffff,
+    map: this.ropeTexture,
+    roughness: 0.78,
     metalness: 0.02
   });
   private readonly lineMaterial = new THREE.LineBasicMaterial({
-    color: 0x3a2f24,
+    color: ROPE_LINE_COLOR,
     linewidth: 1
   });
   private readonly weightMaterial = new THREE.MeshStandardMaterial({
@@ -84,6 +89,7 @@ export class RopeRenderer {
     this.ropeMesh?.geometry.dispose();
     this.ropeLine?.geometry.dispose();
     this.weightMesh.geometry.dispose();
+    this.ropeTexture.dispose();
     this.ropeMaterial.dispose();
     this.lineMaterial.dispose();
     this.weightMaterial.dispose();
@@ -105,6 +111,9 @@ export class RopeRenderer {
 
   private updateTube(): void {
     const curve = new THREE.CatmullRomCurve3(this.curvePoints, false, "centripetal");
+    const ropeLength = curve.getLength();
+    this.ropeTexture.repeat.set(Math.max(1, ropeLength * 3.5), 1);
+
     const geometry = new THREE.TubeGeometry(
       curve,
       this.config.tubularSegments,
@@ -145,4 +154,69 @@ export class RopeRenderer {
       this.group.add(this.ropeLine);
     }
   }
+}
+
+/**
+ * Mottled white + celeste braid pattern sampled from the boat GLB rope spool.
+ * Uses a saturated sky-blue so it stays visible under ACES tone mapping.
+ */
+function createBoatRopeBraidTexture(): THREE.CanvasTexture {
+  const width = 128;
+  const height = 32;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    const fallback = new THREE.CanvasTexture(canvas);
+    fallback.colorSpace = THREE.SRGBColorSpace;
+    return fallback;
+  }
+
+  const white = "#edf4f8";
+  const celeste = "#6b96b3";
+  const celesteDeep = "#4f7f9c";
+  const celesteLight = "#8eb3c9";
+
+  const image = ctx.createImageData(width, height);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const braidBand = Math.floor((x + y * 2) / 5) % 4;
+      const fleck = (x * 5 + y * 3) % 11;
+      let hex = celeste;
+
+      if (braidBand === 0) {
+        hex = white;
+      } else if (braidBand === 1) {
+        hex = celesteLight;
+      } else if (braidBand === 2) {
+        hex = celeste;
+      } else {
+        hex = celesteDeep;
+      }
+
+      if (fleck < 2) {
+        hex = white;
+      } else if (fleck > 8) {
+        hex = celesteDeep;
+      }
+
+      const r = parseInt(hex.slice(1, 3), 16);
+      const g = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      const index = (y * width + x) * 4;
+      image.data[index] = r;
+      image.data[index + 1] = g;
+      image.data[index + 2] = b;
+      image.data[index + 3] = 255;
+    }
+  }
+
+  ctx.putImageData(image, 0, 0);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
 }
