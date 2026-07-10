@@ -11,6 +11,8 @@ This prototype is intentionally WebGPU-only. It should fail with a clear message
 - `C`: move down.
 - `Shift`: speed boost.
 - `Esc`: release pointer lock.
+- `I` / `K`: throttle forward / reverse; the cabin lever follows the smoothed input.
+- `J` / `L`: steer left / right; the cabin wheel follows the smoothed input.
 
 ## Architecture
 

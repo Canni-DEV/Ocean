@@ -244,6 +244,7 @@ export class EngineApp {
       }
 
       boatControl = this.boatController.update(deltaSeconds);
+      this.boatPlaceholder.setControlState(boatControl);
       this.worldTimeHours = (this.worldTimeHours + (deltaSeconds * this.settings.timeScale) / 3600) % 24;
       this.updateWeather(deltaSeconds);
       this.applyFloatingOrigin();

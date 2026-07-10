@@ -2,6 +2,8 @@ import * as THREE from "three/webgpu";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { MeshBVH } from "three-mesh-bvh";
 import boatModelUrl from "../../assets/fishing_boat.glb?url";
+import { BoatControlRig } from "./BoatControlRig";
+import type { BoatControlState } from "./BoatController";
 import { DEFAULT_BOAT_CONFIG, type BoatConfig, type BoatPhysics } from "./BoatPhysics";
 
 /**
@@ -60,6 +62,9 @@ export class BoatPlaceholder {
   private lightsOn = false;
   private colliderGeometry: THREE.BufferGeometry | null = null;
   private colliderBVH: MeshBVH | null = null;
+  private controlRig: BoatControlRig | null = null;
+  private controlThrottle = 0;
+  private controlRudder = 0;
 
   constructor(config: BoatConfig = DEFAULT_BOAT_CONFIG) {
     this.config = config;
@@ -89,6 +94,12 @@ export class BoatPlaceholder {
     this.syncVisibility();
   }
 
+  setControlState(control: BoatControlState): void {
+    this.controlThrottle = control.throttle;
+    this.controlRudder = control.rudder;
+    this.controlRig?.update(control);
+  }
+
   isColliderReady(): boolean {
     return this.colliderBVH !== null;
   }
@@ -111,6 +122,7 @@ export class BoatPlaceholder {
       }
     });
     this.colliderBVH = null;
+    this.controlRig = null;
     this.colliderGeometry?.dispose();
     this.colliderGeometry = null;
     this.group.removeFromParent();
@@ -122,6 +134,11 @@ export class BoatPlaceholder {
       const model = gltf.scene;
       model.name = "Fishing boat model";
       this.prepareModel(model);
+      this.controlRig = BoatControlRig.bind(model);
+      this.controlRig?.update({
+        throttle: this.controlThrottle,
+        rudder: this.controlRudder
+      });
       this.modelGroup.add(model);
       this.modelReady = true;
       this.buildCollider();
