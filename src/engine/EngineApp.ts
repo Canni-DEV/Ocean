@@ -130,6 +130,7 @@ export class EngineApp {
   resetBoat(): void {
     const waterHeight = this.boatPhysicsSampler?.getHeightAt(0, 0) ?? this.physics?.getHeightAt(0, 0) ?? null;
     this.boatPhysics.resetToWorldOrigin(this.originOffsetMeters, waterHeight);
+    this.boatInteraction?.resetHistory();
     this.boatPlaceholder.syncFromPhysics(this.boatPhysics);
   }
 

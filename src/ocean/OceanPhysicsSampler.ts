@@ -46,7 +46,7 @@ export class OceanPhysicsSampler {
     this.interactionEnabled = uniform(0);
 
     const displacementNodes = simulation.cascades.map((cascade) => texture(cascade.displacementTexture));
-    this.interactionTexture = boatInteraction ? texture(boatInteraction.currentTexture) : null;
+    this.interactionTexture = boatInteraction ? texture(boatInteraction.currentDynamicsTexture) : null;
     const regionOrigin = this.regionOrigin;
     const interactionTexture = this.interactionTexture;
     const interactionOrigin = this.interactionOrigin;
@@ -93,7 +93,7 @@ export class OceanPhysicsSampler {
   update(renderer: THREE.WebGPURenderer, centerWorldX: number, centerWorldZ: number): void {
     if (this.boatInteraction && this.interactionTexture) {
       const interaction = this.boatInteraction.sampleState;
-      this.interactionTexture.value = interaction.texture;
+      this.interactionTexture.value = interaction.dynamicsTexture;
       this.interactionOrigin.value.copy(interaction.origin);
       this.interactionSize.value = interaction.sizeMeters;
       this.interactionEnabled.value = interaction.enabled ? 1 : 0;
