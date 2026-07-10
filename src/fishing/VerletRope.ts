@@ -28,7 +28,8 @@ const SUBSTEP_COUNT = 6;
 const WATER_DRAG = 3.5;
 const WATER_BUOYANCY = 8;
 const AIR_DRAG = 0.15;
-const REEL_PULL_STRENGTH = 12;
+const CONSTRAINT_ITERATIONS = 3;
+const CONSTRAINT_ITERATIONS_REELING = 8;
 const MAX_COLLISION_ITERATIONS = 2;
 
 type Particle = {
@@ -44,6 +45,7 @@ export class VerletRope {
   private readonly tempBox = new THREE.Box3();
   private readonly scratchClosest = new THREE.Vector3();
   private readonly scratchDelta = new THREE.Vector3();
+  private readonly scratchVelocity = new THREE.Vector3();
   private paidOutLength: number;
   private tensionAccumulator = 0;
   private tensionSamples = 0;
@@ -155,8 +157,15 @@ export class VerletRope {
       this.config.maxLengthM
     );
 
+    if (reelDelta < 0) {
+      this.absorbReelSlack(-reelDelta);
+    }
+
     const substepDt = deltaSeconds / SUBSTEP_COUNT;
     const segmentRest = this.paidOutLength / this.config.segmentCount;
+    const constraintIterations = reel < -0.05
+      ? CONSTRAINT_ITERATIONS_REELING
+      : CONSTRAINT_ITERATIONS;
 
     for (let step = 0; step < SUBSTEP_COUNT; step += 1) {
       this.particles[0].position.copy(anchor);
@@ -166,22 +175,18 @@ export class VerletRope {
         const particle = this.particles[i];
         if (particle.pinned) continue;
 
-        const velocity = particle.position.clone().sub(particle.previous);
-        velocity.multiplyScalar(1 - AIR_DRAG * substepDt);
+        this.scratchVelocity.subVectors(particle.position, particle.previous);
+        this.scratchVelocity.multiplyScalar(1 - AIR_DRAG * substepDt);
         particle.previous.copy(particle.position);
 
-        particle.position.add(velocity);
+        particle.position.add(this.scratchVelocity);
         particle.position.y -= GRAVITY * substepDt * substepDt;
 
         this.applyWaterForces(particle, originOffset, sampler, substepDt);
       }
 
-      for (let iteration = 0; iteration < 3; iteration += 1) {
+      for (let iteration = 0; iteration < constraintIterations; iteration += 1) {
         this.solveDistanceConstraints(segmentRest);
-      }
-
-      if (reel < -0.05) {
-        this.applyReelPull(anchor, -reel, substepDt);
       }
 
       if (collider) {
@@ -222,35 +227,53 @@ export class VerletRope {
     for (let i = 0; i < this.particles.length - 1; i += 1) {
       const a = this.particles[i];
       const b = this.particles[i + 1];
-      const delta = b.position.clone().sub(a.position);
-      const distance = delta.length();
+      this.scratchDelta.subVectors(b.position, a.position);
+      const distance = this.scratchDelta.length();
       if (distance < 1e-6) continue;
 
       const error = distance - restLength;
       this.tensionAccumulator += Math.abs(error);
       this.tensionSamples += 1;
 
-      delta.divideScalar(distance);
+      this.scratchDelta.divideScalar(distance);
       const totalInvMass = a.inverseMass + b.inverseMass;
       if (totalInvMass <= 0) continue;
 
       const correction = (error / totalInvMass) * 0.5;
       if (!a.pinned) {
-        a.position.addScaledVector(delta, correction * a.inverseMass);
+        a.position.addScaledVector(this.scratchDelta, correction * a.inverseMass);
       }
       if (!b.pinned) {
-        b.position.addScaledVector(delta, -correction * b.inverseMass);
+        b.position.addScaledVector(this.scratchDelta, -correction * b.inverseMass);
       }
     }
   }
 
-  private applyReelPull(anchor: THREE.Vector3, reelStrength: number, dt: number): void {
-    const weight = this.particles[this.particles.length - 1];
-    const pull = anchor.clone().sub(weight.position);
-    const distance = pull.length();
-    if (distance < 1e-4) return;
-    pull.divideScalar(distance);
-    weight.position.addScaledVector(pull, REEL_PULL_STRENGTH * reelStrength * dt);
+  /**
+   * Takes up rope slack from the anchor downward at the reel rate so the weight
+   * rises with the line instead of being yanked directly to the pulley.
+   */
+  private absorbReelSlack(contractionM: number): void {
+    if (contractionM <= 0) return;
+
+    const segmentRest = this.paidOutLength / this.config.segmentCount;
+    let remaining = contractionM;
+
+    for (let i = 1; i < this.particles.length && remaining > 0; i += 1) {
+      const prev = this.particles[i - 1].position;
+      const curr = this.particles[i];
+
+      this.scratchDelta.subVectors(curr.position, prev);
+      const distance = this.scratchDelta.length();
+      const slack = Math.max(0, distance - segmentRest);
+      if (slack <= 1e-5) continue;
+
+      const absorb = Math.min(slack, remaining);
+      this.scratchDelta.divideScalar(distance);
+      curr.position.addScaledVector(this.scratchDelta, -absorb);
+      curr.previous.addScaledVector(this.scratchDelta, -absorb * 0.85);
+      remaining -= absorb;
+    }
   }
 
   private resolveHullCollision(
