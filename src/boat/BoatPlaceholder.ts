@@ -33,10 +33,9 @@ export class BoatPlaceholder {
   private readonly placeholderGroup = new THREE.Group();
   private readonly modelGroup = new THREE.Group();
   private readonly lightGroup = new THREE.Group();
-  private readonly spotlight = new THREE.SpotLight(0xfff0d0, 600, 300, 0.9, 0.48, 1.35);
+  private readonly spotlight = new THREE.SpotLight(0xfff0d0, 1200, 1000, 1.1, 0.48, 1.35);
   private readonly spotlightCabin = new THREE.SpotLight(0xfff0d0, 10, 300, 2.5, 0.48, 1.35);
   private readonly spotlightTarget = new THREE.Object3D();
-  private readonly spotlightInnerTarget = new THREE.Object3D();
   private readonly spotlightCabinTarget = new THREE.Object3D();
   private readonly hullMaterial = new THREE.MeshStandardMaterial({
     color: 0xd95f32,
@@ -227,13 +226,7 @@ export class BoatPlaceholder {
     const targetPosition = new THREE.Vector3(
       -this.config.beamMeters * 0.02,
       this.config.hullHeightMeters * 0.3,
-      -this.config.lengthMeters * 2.5
-    );
-
-     const targetPositionBoat = new THREE.Vector3(
-      -this.config.beamMeters * 0.02,
-      this.config.hullHeightMeters * 0.3,
-      -this.config.lengthMeters * 0.15  
+      -this.config.lengthMeters * 75
     );
 
     const targetPositionCabin = new THREE.Vector3(
@@ -251,8 +244,6 @@ export class BoatPlaceholder {
     this.spotlightTarget.name = "Boat forward spotlight target";
     this.spotlightTarget.position.copy(targetPosition);
 
-    this.spotlightInnerTarget.name = "Boat forward1 spotlight target";
-    this.spotlightInnerTarget.position.copy(targetPositionBoat);
 
     //Cabin
     this.spotlightCabin.name = "Cabin forward1 spotlight";
