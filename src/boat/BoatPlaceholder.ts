@@ -5,6 +5,7 @@ import boatModelUrl from "../../assets/fishing_boat.glb?url";
 import { BoatControlRig } from "./BoatControlRig";
 import type { BoatControlState } from "./BoatController";
 import { FishingControlRig } from "../fishing/FishingControlRig";
+import { BOOM_ELEVATION_DEFAULT_RAD } from "../fishing/FishingBoomAssemblyRig";
 import type { FishingControlState } from "../fishing/FishingController";
 import { DEFAULT_BOAT_CONFIG, type BoatConfig, type BoatPhysics } from "./BoatPhysics";
 
@@ -68,6 +69,7 @@ export class BoatPlaceholder {
   private controlThrottle = 0;
   private controlRudder = 0;
   private fishingReel = 0;
+  private fishingBoomElevationRad = BOOM_ELEVATION_DEFAULT_RAD;
 
   constructor(config: BoatConfig = DEFAULT_BOAT_CONFIG) {
     this.config = config;
@@ -105,7 +107,8 @@ export class BoatPlaceholder {
 
   setFishingState(control: FishingControlState): void {
     this.fishingReel = control.reel;
-    this.fishingControlRig?.update(control.reel);
+    this.fishingBoomElevationRad = control.boomElevationRad;
+    this.fishingControlRig?.update(control.reel, control.boomElevationRad);
   }
 
   isModelReady(): boolean {
@@ -157,7 +160,7 @@ export class BoatPlaceholder {
         rudder: this.controlRudder
       });
       this.fishingControlRig = FishingControlRig.bind(model);
-      this.fishingControlRig?.update(this.fishingReel);
+      this.fishingControlRig?.update(this.fishingReel, this.fishingBoomElevationRad);
       this.modelGroup.add(model);
       this.modelReady = true;
       this.buildCollider();

@@ -14,6 +14,7 @@ This prototype is intentionally WebGPU-only. It should fail with a clear message
 - `I` / `K`: throttle forward / reverse; the cabin lever follows the smoothed input.
 - `J` / `L`: steer left / right; the cabin wheel follows the smoothed input.
 - `U` / `P`: pay out / reel in the bow fishing rope; the forward rope lever follows the smoothed input.
+- `Y` / `H`: raise / lower the bow fishing boom about the winch base; the boom lever follows the smoothed input.
 - `O`: toggle boat spotlights.
 
 ## Architecture

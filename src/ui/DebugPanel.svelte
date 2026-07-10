@@ -513,7 +513,7 @@
   </section>
 
   <p class="mt-3 text-[11px] leading-snug text-slate-400">
-    Debug: ` muestra/oculta el menú. Click canvas for pointer lock. Free camera: WASD move, Space/C vertical, Shift boost, Esc releases. Boat: I/K throttle, J/L rudder, O luces. Fishing: U soltar soga, P recoger soga. Primera persona: WASD caminar, mouse mirar, Esc sale del modo.
+    Debug: ` muestra/oculta el menú. Click canvas for pointer lock. Free camera: WASD move, Space/C vertical, Shift boost, Esc releases. Boat: I/K throttle, J/L rudder, O luces. Fishing: U soltar soga, P recoger soga, Y subir brazo, H bajar brazo. Primera persona: WASD caminar, mouse mirar, Esc sale del modo.
   </p>
 </aside>
 

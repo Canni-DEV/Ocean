@@ -3,7 +3,8 @@ import { AtmosphereSystem } from "../atmosphere/AtmosphereSystem";
 import { BoatController, type BoatControlState } from "../boat/BoatController";
 import { BoatPhysics } from "../boat/BoatPhysics";
 import { BoatPlaceholder } from "../boat/BoatPlaceholder";
-import { FishingController } from "../fishing/FishingController";
+import { FishingController, type FishingControlState } from "../fishing/FishingController";
+import { BOOM_ELEVATION_DEFAULT_RAD } from "../fishing/FishingBoomAssemblyRig";
 import { FishingRopeSystem } from "../fishing/FishingRopeSystem";
 import { OceanPhysicsSampler } from "../ocean/OceanPhysicsSampler";
 import { OceanRenderer } from "../ocean/OceanRenderer";
@@ -260,7 +261,10 @@ export class EngineApp {
     this.lastFrameMs = now;
     const statStart = this.stats.begin();
     let boatControl: BoatControlState | null = null;
-    let fishingControl = { reel: 0 };
+    let fishingControl: FishingControlState = {
+      reel: 0,
+      boomElevationRad: BOOM_ELEVATION_DEFAULT_RAD
+    };
 
     if (!this.settings.paused) {
       if (this.firstPersonActive) {
