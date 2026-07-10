@@ -33,7 +33,14 @@ export const DEFAULT_DEBUG_SETTINGS: DebugSettings = {
   exposureBias: 0,
   boatUseModel: false,
   boatLightsOn: false,
-  firstPerson: false
+  firstPerson: false,
+  fishingRopeEnabled: true,
+  fishingRopeRadius: 0.02,
+  fishingRopeRenderMode: "tube",
+  fishingRopeMinLengthM: 1,
+  fishingRopeMaxLengthM: 50,
+  fishingRopeInitialLengthM: 2,
+  fishingReelSpeedMs: 0.5
 };
 
 export const DEFAULT_ENGINE_METRICS: EngineMetrics = {
@@ -51,6 +58,7 @@ export const DEFAULT_ENGINE_METRICS: EngineMetrics = {
   camera: { x: 0, y: 14, z: 32, yawDeg: 0, pitchDeg: -12 },
   boat: null,
   firstPerson: null,
+  fishing: null,
   originOffsetMeters: { x: 0, z: 0 },
   status: "booting",
   error: null

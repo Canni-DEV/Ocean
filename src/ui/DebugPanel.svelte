@@ -4,6 +4,7 @@
     DebugRenderMode,
     DebugSettings,
     EngineMetrics,
+    FishingRopeRenderMode,
     QualityTier,
     WeatherPresetName
   } from "../engine/types";
@@ -164,6 +165,20 @@
           { label: "On Ground", value: metrics.firstPerson.onGround ? "yes" : "no" }
         ]
   );
+
+  const fishingCards = $derived(
+    metrics.fishing === null
+      ? [{ label: "Fishing Rope", value: "off" }]
+      : [
+          { label: "Rope Length", value: `${metrics.fishing.paidOutLengthM.toFixed(1)} m` },
+          { label: "Rope Tension", value: metrics.fishing.ropeTension.toFixed(3) }
+        ]
+  );
+
+  const ropeRenderModes: Array<{ value: FishingRopeRenderMode; label: string }> = [
+    { value: "tube", label: "Tube" },
+    { value: "line", label: "Line" }
+  ];
 
   function toggleFirstPerson() {
     patch({ firstPerson: !settings.firstPerson, boatUseModel: true });
@@ -413,10 +428,92 @@
         </div>
       {/each}
     </section>
+    <section class="mt-3 rounded border border-cyan-300/20 bg-cyan-950/20 p-2">
+      <h2 class="mb-2 text-[11px] font-semibold uppercase tracking-normal text-cyan-200">Fishing Rope</h2>
+      <div class="mb-2 grid grid-cols-2 gap-2">
+        <label class="flex min-h-8 items-center justify-between gap-2 rounded border border-white/10 bg-white/[0.045] px-2 py-1">
+          <span class="!mb-0 !text-[10px] !normal-case !text-slate-200">Enabled</span>
+          <input type="checkbox" checked={settings.fishingRopeEnabled} onchange={(event) => patch({ fishingRopeEnabled: checked(event) })} />
+        </label>
+        <label class="col-span-2">
+          <span>Render Mode</span>
+          <select value={settings.fishingRopeRenderMode} onchange={(event) => patch({ fishingRopeRenderMode: value(event) as FishingRopeRenderMode })}>
+            {#each ropeRenderModes as option}
+              <option value={option.value}>{option.label}</option>
+            {/each}
+          </select>
+        </label>
+        <label>
+          <span>Radius {settings.fishingRopeRadius.toFixed(3)} m</span>
+          <input min="0.005" max="0.05" step="0.001" type="range" value={settings.fishingRopeRadius} oninput={(event) => patch({ fishingRopeRadius: numberValue(event) })} />
+        </label>
+        <label>
+          <span>Reel Speed {settings.fishingReelSpeedMs.toFixed(2)} m/s</span>
+          <input min="0.1" max="2" step="0.05" type="range" value={settings.fishingReelSpeedMs} oninput={(event) => patch({ fishingReelSpeedMs: numberValue(event) })} />
+        </label>
+        <label>
+          <span>Min Length {settings.fishingRopeMinLengthM.toFixed(1)} m</span>
+          <input
+            min="1"
+            max="20"
+            step="0.5"
+            type="range"
+            value={settings.fishingRopeMinLengthM}
+            oninput={(event) => {
+              const minLengthM = numberValue(event);
+              patch({
+                fishingRopeMinLengthM: minLengthM,
+                fishingRopeMaxLengthM: Math.max(minLengthM, settings.fishingRopeMaxLengthM),
+                fishingRopeInitialLengthM: Math.min(
+                  Math.max(minLengthM, settings.fishingRopeInitialLengthM),
+                  Math.max(minLengthM, settings.fishingRopeMaxLengthM)
+                )
+              });
+            }}
+          />
+        </label>
+        <label>
+          <span>Initial Length {settings.fishingRopeInitialLengthM.toFixed(1)} m</span>
+          <input
+            min={settings.fishingRopeMinLengthM}
+            max={settings.fishingRopeMaxLengthM}
+            step="0.5"
+            type="range"
+            value={settings.fishingRopeInitialLengthM}
+            oninput={(event) => patch({ fishingRopeInitialLengthM: numberValue(event) })}
+          />
+        </label>
+        <label>
+          <span>Max Length {settings.fishingRopeMaxLengthM.toFixed(0)} m</span>
+          <input
+            min={Math.max(2, settings.fishingRopeMinLengthM + 1)}
+            max="100"
+            step="1"
+            type="range"
+            value={settings.fishingRopeMaxLengthM}
+            oninput={(event) => {
+              const maxLengthM = numberValue(event);
+              patch({
+                fishingRopeMaxLengthM: maxLengthM,
+                fishingRopeInitialLengthM: Math.min(settings.fishingRopeInitialLengthM, maxLengthM)
+              });
+            }}
+          />
+        </label>
+      </div>
+      <section class="grid grid-cols-2 gap-2">
+        {#each fishingCards as metric}
+          <div class="rounded border border-white/10 bg-white/[0.045] p-2">
+            <div class="text-[10px] uppercase text-slate-500">{metric.label}</div>
+            <div class="mt-1 truncate font-mono text-[12px] text-slate-100">{metric.value}</div>
+          </div>
+        {/each}
+      </section>
+    </section>
   </section>
 
   <p class="mt-3 text-[11px] leading-snug text-slate-400">
-    Debug: ` muestra/oculta el menú. Click canvas for pointer lock. Free camera: WASD move, Space/C vertical, Shift boost, Esc releases. Boat: I/K throttle, J/L rudder, O luces. Primera persona: WASD caminar, mouse mirar, Esc sale del modo.
+    Debug: ` muestra/oculta el menú. Click canvas for pointer lock. Free camera: WASD move, Space/C vertical, Shift boost, Esc releases. Boat: I/K throttle, J/L rudder, O luces. Fishing: U soltar soga, P recoger soga. Primera persona: WASD caminar, mouse mirar, Esc sale del modo.
   </p>
 </aside>
 

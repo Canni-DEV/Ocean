@@ -4,6 +4,8 @@ import { MeshBVH } from "three-mesh-bvh";
 import boatModelUrl from "../../assets/fishing_boat.glb?url";
 import { BoatControlRig } from "./BoatControlRig";
 import type { BoatControlState } from "./BoatController";
+import { FishingControlRig } from "../fishing/FishingControlRig";
+import type { FishingControlState } from "../fishing/FishingController";
 import { DEFAULT_BOAT_CONFIG, type BoatConfig, type BoatPhysics } from "./BoatPhysics";
 
 /**
@@ -62,8 +64,10 @@ export class BoatPlaceholder {
   private colliderGeometry: THREE.BufferGeometry | null = null;
   private colliderBVH: MeshBVH | null = null;
   private controlRig: BoatControlRig | null = null;
+  private fishingControlRig: FishingControlRig | null = null;
   private controlThrottle = 0;
   private controlRudder = 0;
+  private fishingReel = 0;
 
   constructor(config: BoatConfig = DEFAULT_BOAT_CONFIG) {
     this.config = config;
@@ -99,6 +103,19 @@ export class BoatPlaceholder {
     this.controlRig?.update(control);
   }
 
+  setFishingState(control: FishingControlState): void {
+    this.fishingReel = control.reel;
+    this.fishingControlRig?.update(control.reel);
+  }
+
+  isModelReady(): boolean {
+    return this.modelReady;
+  }
+
+  getFishingRig(): FishingControlRig | null {
+    return this.fishingControlRig;
+  }
+
   isColliderReady(): boolean {
     return this.colliderBVH !== null;
   }
@@ -122,6 +139,7 @@ export class BoatPlaceholder {
     });
     this.colliderBVH = null;
     this.controlRig = null;
+    this.fishingControlRig = null;
     this.colliderGeometry?.dispose();
     this.colliderGeometry = null;
     this.group.removeFromParent();
@@ -138,6 +156,8 @@ export class BoatPlaceholder {
         throttle: this.controlThrottle,
         rudder: this.controlRudder
       });
+      this.fishingControlRig = FishingControlRig.bind(model);
+      this.fishingControlRig?.update(this.fishingReel);
       this.modelGroup.add(model);
       this.modelReady = true;
       this.buildCollider();

@@ -114,6 +114,11 @@ export type FirstPersonDebugState = {
   onGround: boolean;
 };
 
+export type FishingDebugState = {
+  paidOutLengthM: number;
+  ropeTension: number;
+};
+
 export type EngineMetrics = {
   backend: "webgpu";
   fps: number;
@@ -129,10 +134,13 @@ export type EngineMetrics = {
   camera: CameraDebugState;
   boat: BoatDebugState | null;
   firstPerson: FirstPersonDebugState | null;
+  fishing: FishingDebugState | null;
   originOffsetMeters: { x: number; z: number };
   status: "booting" | "running" | "error";
   error: string | null;
 };
+
+export type FishingRopeRenderMode = "tube" | "line";
 
 export type DebugSettings = {
   quality: QualityTier;
@@ -171,4 +179,11 @@ export type DebugSettings = {
   /** Master toggle for all boat lights (spotlights). Off by default. */
   boatLightsOn: boolean;
   firstPerson: boolean;
+  fishingRopeEnabled: boolean;
+  fishingRopeRadius: number;
+  fishingRopeRenderMode: FishingRopeRenderMode;
+  fishingRopeMinLengthM: number;
+  fishingRopeMaxLengthM: number;
+  fishingRopeInitialLengthM: number;
+  fishingReelSpeedMs: number;
 };
