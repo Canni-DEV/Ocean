@@ -8,7 +8,14 @@ const BOOM_ASSEMBLY_OBJECT_NAMES = [
   "Vert.009",
   "Cylinder.004",
   "Cylinder.013",
-  "Cylinder.017",
+  "Cylinder.017"
+] as const;
+
+/**
+ * Baked decorative rope paths from the GLB. They were authored for the original
+ * inboard boom pose and break visually once the assembly is reoriented.
+ */
+const HIDDEN_DECORATIVE_ROPE_OBJECT_NAMES = [
   "NurbsPath.001",
   "BezierCurve"
 ] as const;
@@ -37,6 +44,8 @@ export class FishingBoomAssemblyRig {
   }
 
   static apply(model: THREE.Object3D): FishingBoomAssemblyRig | null {
+    hideDecorativeRopeMeshes(model);
+
     const assemblyObjects = BOOM_ASSEMBLY_OBJECT_NAMES
       .map((name) => findSourceObject(model, name))
       .filter((object): object is THREE.Object3D => object !== null);
@@ -92,6 +101,20 @@ export class FishingBoomAssemblyRig {
 
   getMountPivot(): THREE.Group {
     return this.mountPivot;
+  }
+}
+
+function hideDecorativeRopeMeshes(model: THREE.Object3D): void {
+  for (const name of HIDDEN_DECORATIVE_ROPE_OBJECT_NAMES) {
+    const object = findSourceObject(model, name);
+    if (!object) continue;
+    object.traverse((descendant) => {
+      descendant.visible = false;
+      const mesh = descendant as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.userData.excludeFromCollider = true;
+      }
+    });
   }
 }
 
