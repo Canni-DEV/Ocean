@@ -2,7 +2,8 @@ import * as THREE from "three/webgpu";
 import type { BoatControlState } from "./BoatController";
 
 const WHEEL_OBJECT_NAME = "Cylinder.010";
-const THROTTLE_LEVER_OBJECT_NAMES = ["Cylinder.011", "Cylinder.012"] as const;
+/** Fixed semi-circular housing on the dashboard; Cylinder.012 is the moving lever arm. */
+const THROTTLE_LEVER_OBJECT_NAME = "Cylinder.012";
 
 const MAX_WHEEL_ROTATION_RAD = THREE.MathUtils.degToRad(100);
 const MAX_THROTTLE_ROTATION_RAD = THREE.MathUtils.degToRad(28);
@@ -31,11 +32,9 @@ export class BoatControlRig {
 
   static bind(model: THREE.Object3D): BoatControlRig | null {
     const wheel = findSourceObject(model, WHEEL_OBJECT_NAME);
-    const throttleLever = THROTTLE_LEVER_OBJECT_NAMES
-      .map((name) => findSourceObject(model, name))
-      .filter((object): object is THREE.Object3D => object !== null);
+    const throttleLever = findSourceObject(model, THROTTLE_LEVER_OBJECT_NAME);
 
-    if (!wheel || throttleLever.length !== THROTTLE_LEVER_OBJECT_NAMES.length) {
+    if (!wheel || !throttleLever) {
       console.warn("Boat control rig could not bind: the expected GLB control nodes are missing.");
       return null;
     }
@@ -47,16 +46,12 @@ export class BoatControlRig {
     wheelPivot.attach(wheel);
 
     const throttlePivot = createThrottlePivot(model, throttleLever);
-    for (const object of throttleLever) {
-      throttlePivot.attach(object);
-    }
+    throttlePivot.attach(throttleLever);
 
     // The gameplay collider is baked once. Keeping animated geometry out prevents
     // a stale invisible wheel/lever pose from affecting first-person movement.
     markExcludedFromCollider(wheel);
-    for (const object of throttleLever) {
-      markExcludedFromCollider(object);
-    }
+    markExcludedFromCollider(throttleLever);
 
     model.updateMatrixWorld(true);
     return new BoatControlRig(wheelPivot, wheelRotationAxis, throttlePivot);
@@ -103,15 +98,8 @@ function createPivotAtObjectCenter(
   return pivot;
 }
 
-function createThrottlePivot(
-  model: THREE.Object3D,
-  leverObjects: THREE.Object3D[]
-): THREE.Group {
-  const leverBounds = new THREE.Box3();
-  for (const object of leverObjects) {
-    leverBounds.union(new THREE.Box3().setFromObject(object));
-  }
-
+function createThrottlePivot(model: THREE.Object3D, lever: THREE.Object3D): THREE.Group {
+  const leverBounds = new THREE.Box3().setFromObject(lever);
   const pivotWorld = leverBounds.getCenter(new THREE.Vector3());
   pivotWorld.y = leverBounds.min.y;
 

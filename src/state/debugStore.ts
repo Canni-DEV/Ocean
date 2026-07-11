@@ -36,7 +36,7 @@ export const DEFAULT_DEBUG_SETTINGS: DebugSettings = {
   boatLightsOn: false,
   firstPerson: false,
   fishingRopeEnabled: true,
-  fishingRopeRadius: 0.01,
+  fishingRopeRadius: 0.008,
   fishingRopeRenderMode: "tube",
   fishingRopeMinLengthM: 1,
   fishingRopeMaxLengthM: 50,
