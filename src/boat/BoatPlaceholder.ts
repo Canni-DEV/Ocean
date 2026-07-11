@@ -69,6 +69,7 @@ export class BoatPlaceholder {
   private controlThrottle = 0;
   private controlRudder = 0;
   private fishingReel = 0;
+  private fishingBoom = 0;
   private fishingBoomElevationRad = BOOM_ELEVATION_DEFAULT_RAD;
 
   constructor(config: BoatConfig = DEFAULT_BOAT_CONFIG) {
@@ -107,8 +108,9 @@ export class BoatPlaceholder {
 
   setFishingState(control: FishingControlState): void {
     this.fishingReel = control.reel;
+    this.fishingBoom = control.boom;
     this.fishingBoomElevationRad = control.boomElevationRad;
-    this.fishingControlRig?.update(control.reel, control.boomElevationRad);
+    this.fishingControlRig?.update(control.reel, control.boom, control.boomElevationRad);
   }
 
   isModelReady(): boolean {
@@ -160,7 +162,7 @@ export class BoatPlaceholder {
         rudder: this.controlRudder
       });
       this.fishingControlRig = FishingControlRig.bind(model);
-      this.fishingControlRig?.update(this.fishingReel, this.fishingBoomElevationRad);
+      this.fishingControlRig?.update(this.fishingReel, this.fishingBoom, this.fishingBoomElevationRad);
       this.modelGroup.add(model);
       this.modelReady = true;
       this.buildCollider();

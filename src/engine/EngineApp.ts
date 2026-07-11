@@ -263,6 +263,7 @@ export class EngineApp {
     let boatControl: BoatControlState | null = null;
     let fishingControl: FishingControlState = {
       reel: 0,
+      boom: 0,
       boomElevationRad: BOOM_ELEVATION_DEFAULT_RAD
     };
 

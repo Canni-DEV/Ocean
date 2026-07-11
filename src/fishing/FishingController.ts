@@ -7,6 +7,7 @@ import {
 
 export type FishingControlState = {
   reel: number;
+  boom: number;
   boomElevationRad: number;
 };
 
@@ -41,6 +42,7 @@ export class FishingController {
 
     return {
       reel: this.reel,
+      boom: this.boomInput,
       boomElevationRad: this.boomElevationRad
     };
   }

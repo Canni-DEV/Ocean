@@ -1,13 +1,10 @@
 import * as THREE from "three/webgpu";
-import {
-  BOOM_ELEVATION_MAX_RAD,
-  BOOM_ELEVATION_MIN_RAD,
-  FishingBoomAssemblyRig
-} from "./FishingBoomAssemblyRig";
+import { FishingBoomAssemblyRig } from "./FishingBoomAssemblyRig";
 
 const PULLEY_OBJECT_NAMES = ["Cylinder.013", "Cylinder.017"] as const;
 const ROPE_LEVER_OBJECT_NAME = "Cylinder.014";
-const BOOM_LEVER_OBJECT_NAME = "Cylinder.015";
+/** Right-hand lever arm; Cylinder.015 is the fixed horizontal base between both levers. */
+const BOOM_LEVER_OBJECT_NAME = "Cylinder.016";
 
 const MAX_ROPE_LEVER_ROTATION_RAD = THREE.MathUtils.degToRad(32);
 const MAX_BOOM_LEVER_ROTATION_RAD = THREE.MathUtils.degToRad(36);
@@ -68,7 +65,7 @@ export class FishingControlRig {
     return new FishingControlRig(pulleySocket, ropeLeverPivot, boomLeverPivot, boomAssembly);
   }
 
-  update(reel: number, boomElevationRad: number): void {
+  update(reel: number, boom: number, boomElevationRad: number): void {
     const clampedReel = THREE.MathUtils.clamp(reel, -1, 1);
     this.ropeLeverPivot.quaternion.setFromAxisAngle(
       ROPE_LEVER_ROTATION_AXIS,
@@ -77,14 +74,10 @@ export class FishingControlRig {
 
     this.boomAssembly?.setElevation(boomElevationRad);
 
-    const boomSpan = BOOM_ELEVATION_MAX_RAD - BOOM_ELEVATION_MIN_RAD;
-    const boomNormalized = boomSpan > 0
-      ? (boomElevationRad - BOOM_ELEVATION_MIN_RAD) / boomSpan
-      : 0;
-    const boomLeverAngle = (boomNormalized * 2 - 1) * MAX_BOOM_LEVER_ROTATION_RAD;
+    const clampedBoom = THREE.MathUtils.clamp(boom, -1, 1);
     this.boomLeverPivot.quaternion.setFromAxisAngle(
       BOOM_LEVER_ROTATION_AXIS,
-      -boomLeverAngle
+      -clampedBoom * MAX_BOOM_LEVER_ROTATION_RAD
     );
   }
 }
