@@ -189,7 +189,7 @@
   ];
 
   function toggleFirstPerson() {
-    patch({ firstPerson: !settings.firstPerson, boatUseModel: true });
+    patch({ firstPerson: !settings.firstPerson });
   }
 
   function checked(event: Event): boolean {
@@ -394,10 +394,6 @@
     <div class="mb-2 flex items-center justify-between gap-2">
       <h2 class="text-[11px] font-semibold uppercase tracking-normal text-orange-200">Boat</h2>
       <div class="flex items-center gap-2">
-        <label class="!mb-0 flex min-h-6 items-center gap-1 rounded border border-orange-200/20 bg-orange-200/10 px-2 py-1">
-          <span class="!mb-0 !text-[10px] !text-orange-100">Model</span>
-          <input type="checkbox" checked={settings.boatUseModel} onchange={(event) => patch({ boatUseModel: checked(event) })} />
-        </label>
         <label class="!mb-0 flex min-h-6 items-center gap-1 rounded border border-orange-200/20 bg-orange-200/10 px-2 py-1">
           <span class="!mb-0 !text-[10px] !text-orange-100">Luces (O)</span>
           <input type="checkbox" checked={settings.boatLightsOn} onchange={(event) => patch({ boatLightsOn: checked(event) })} />

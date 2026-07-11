@@ -16,6 +16,12 @@ const BOOM_ASSEMBLY_OBJECT_NAMES = [
 ] as const;
 
 /**
+ * Cradle / rest support under the winch on the rail (`Cube.007`).
+ * Slides and yaws with the mount, but must not pitch with boom elevation.
+ */
+const BOOM_MOUNT_OBJECT_NAMES = ["Cube.007"] as const;
+
+/**
  * Baked decorative rope paths from the GLB. They were authored for the original
  * inboard boom pose and break visually once the assembly is reoriented.
  */
@@ -79,8 +85,19 @@ export class FishingBoomAssemblyRig {
       markExcludedFromCollider(object);
     }
 
+    const mountObjects = BOOM_MOUNT_OBJECT_NAMES
+      .map((name) => findSourceObject(model, name))
+      .filter((object): object is THREE.Object3D => object !== null);
+    for (const object of mountObjects) {
+      if (attached.has(object)) continue;
+      attached.add(object);
+      mountPivot.attach(object);
+      markExcludedFromCollider(object);
+    }
+
     // Apply outward yaw after attach so Three.js does not bake a compensating local rotation.
     mountPivot.rotation.y = BOOM_OUTWARD_ROTATION_Y;
+    mountPivot.position.x = mountPivot.position.x + 0.8 ;
     mountPivot.updateMatrixWorld(true);
     return new FishingBoomAssemblyRig(mountPivot, elevationPivot);
   }

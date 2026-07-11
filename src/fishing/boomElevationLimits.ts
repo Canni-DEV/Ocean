@@ -8,9 +8,9 @@ export type BoomElevationLimitsDeg = {
 
 /** Collision-safe defaults for the outward-facing boom pitch (degrees, X axis). */
 export const DEFAULT_BOOM_ELEVATION_LIMITS_DEG: BoomElevationLimitsDeg = {
-  minDeg: 12,
+  minDeg: -12,
   maxDeg: 60,
-  defaultDeg: 12
+  defaultDeg: -10
 };
 
 let limitsDeg: BoomElevationLimitsDeg = { ...DEFAULT_BOOM_ELEVATION_LIMITS_DEG };

@@ -178,7 +178,6 @@ export type DebugSettings = {
   cloudCoverageBias: number;
   cloudDensityBias: number;
   exposureBias: number;
-  boatUseModel: boolean;
   /** Master toggle for all boat lights (spotlights). Off by default. */
   boatLightsOn: boolean;
   firstPerson: boolean;
