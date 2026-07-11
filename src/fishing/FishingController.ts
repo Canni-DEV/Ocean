@@ -1,9 +1,8 @@
 import * as THREE from "three/webgpu";
 import {
-  BOOM_ELEVATION_DEFAULT_RAD,
-  BOOM_ELEVATION_MAX_RAD,
-  BOOM_ELEVATION_MIN_RAD
-} from "./FishingBoomAssemblyRig";
+  clampBoomElevationRad,
+  getBoomElevationDefaultRad
+} from "./boomElevationLimits";
 
 export type FishingControlState = {
   reel: number;
@@ -19,7 +18,7 @@ export class FishingController {
   private disposed = false;
   private reel = 0;
   private boomInput = 0;
-  private boomElevationRad = BOOM_ELEVATION_DEFAULT_RAD;
+  private boomElevationRad = getBoomElevationDefaultRad();
 
   constructor() {
     window.addEventListener("keydown", this.onKeyDown);
@@ -34,10 +33,8 @@ export class FishingController {
     this.reel += (targetReel - this.reel) * blend;
     this.boomInput += (targetBoom - this.boomInput) * blend;
 
-    this.boomElevationRad = THREE.MathUtils.clamp(
-      this.boomElevationRad + this.boomInput * BOOM_SPEED_RAD_PER_SEC * deltaSeconds,
-      BOOM_ELEVATION_MIN_RAD,
-      BOOM_ELEVATION_MAX_RAD
+    this.boomElevationRad = clampBoomElevationRad(
+      this.boomElevationRad + this.boomInput * BOOM_SPEED_RAD_PER_SEC * deltaSeconds
     );
 
     return {
@@ -45,6 +42,14 @@ export class FishingController {
       boom: this.boomInput,
       boomElevationRad: this.boomElevationRad
     };
+  }
+
+  applyBoomLimits(): void {
+    this.boomElevationRad = clampBoomElevationRad(this.boomElevationRad);
+  }
+
+  setBoomElevationRad(angleRad: number): void {
+    this.boomElevationRad = clampBoomElevationRad(angleRad);
   }
 
   dispose(): void {

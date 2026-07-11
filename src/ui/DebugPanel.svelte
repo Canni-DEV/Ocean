@@ -168,10 +168,18 @@
 
   const fishingCards = $derived(
     metrics.fishing === null
-      ? [{ label: "Fishing Rope", value: "off" }]
+      ? [{ label: "Fishing", value: "off" }]
       : [
-          { label: "Rope Length", value: `${metrics.fishing.paidOutLengthM.toFixed(1)} m` },
-          { label: "Rope Tension", value: metrics.fishing.ropeTension.toFixed(3) }
+          {
+            label: "Boom Angle",
+            value: `${metrics.fishing.boomElevationDeg.toFixed(1)}° (${metrics.fishing.boomMinDeg.toFixed(0)}° .. ${metrics.fishing.boomMaxDeg.toFixed(0)}°)`
+          },
+          ...(settings.fishingRopeEnabled
+            ? [
+                { label: "Rope Length", value: `${metrics.fishing.paidOutLengthM.toFixed(1)} m` },
+                { label: "Rope Tension", value: metrics.fishing.ropeTension.toFixed(3) }
+              ]
+            : [])
         ]
   );
 
@@ -498,6 +506,58 @@
                 fishingRopeInitialLengthM: Math.min(settings.fishingRopeInitialLengthM, maxLengthM)
               });
             }}
+          />
+        </label>
+      </div>
+      <h3 class="mb-2 text-[10px] font-semibold uppercase tracking-normal text-cyan-300/80">Boom Elevation (Y/H)</h3>
+      <div class="mb-2 grid grid-cols-2 gap-2">
+        <label>
+          <span>Min Angle {settings.fishingBoomMinDeg.toFixed(0)}°</span>
+          <input
+            min="-45"
+            max="45"
+            step="1"
+            type="range"
+            value={settings.fishingBoomMinDeg}
+            oninput={(event) => {
+              const minDeg = numberValue(event);
+              patch({
+                fishingBoomMinDeg: minDeg,
+                fishingBoomMaxDeg: Math.max(minDeg, settings.fishingBoomMaxDeg),
+                fishingBoomDefaultDeg: Math.min(
+                  Math.max(minDeg, settings.fishingBoomDefaultDeg),
+                  Math.max(minDeg, settings.fishingBoomMaxDeg)
+                )
+              });
+            }}
+          />
+        </label>
+        <label>
+          <span>Max Angle {settings.fishingBoomMaxDeg.toFixed(0)}°</span>
+          <input
+            min={settings.fishingBoomMinDeg}
+            max="60"
+            step="1"
+            type="range"
+            value={settings.fishingBoomMaxDeg}
+            oninput={(event) => {
+              const maxDeg = numberValue(event);
+              patch({
+                fishingBoomMaxDeg: maxDeg,
+                fishingBoomDefaultDeg: Math.min(settings.fishingBoomDefaultDeg, maxDeg)
+              });
+            }}
+          />
+        </label>
+        <label class="col-span-2">
+          <span>Default Angle {settings.fishingBoomDefaultDeg.toFixed(0)}°</span>
+          <input
+            min={settings.fishingBoomMinDeg}
+            max={settings.fishingBoomMaxDeg}
+            step="1"
+            type="range"
+            value={settings.fishingBoomDefaultDeg}
+            oninput={(event) => patch({ fishingBoomDefaultDeg: numberValue(event) })}
           />
         </label>
       </div>

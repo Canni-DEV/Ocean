@@ -117,6 +117,9 @@ export type FirstPersonDebugState = {
 export type FishingDebugState = {
   paidOutLengthM: number;
   ropeTension: number;
+  boomElevationDeg: number;
+  boomMinDeg: number;
+  boomMaxDeg: number;
 };
 
 export type EngineMetrics = {
@@ -186,4 +189,8 @@ export type DebugSettings = {
   fishingRopeMaxLengthM: number;
   fishingRopeInitialLengthM: number;
   fishingReelSpeedMs: number;
+  /** Allowed boom pitch range in degrees (X axis, Y/H controls). */
+  fishingBoomMinDeg: number;
+  fishingBoomMaxDeg: number;
+  fishingBoomDefaultDeg: number;
 };

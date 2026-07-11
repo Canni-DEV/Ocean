@@ -1,4 +1,8 @@
 import * as THREE from "three/webgpu";
+import {
+  clampBoomElevationRad,
+  getBoomElevationDefaultRad
+} from "./boomElevationLimits";
 
 /**
  * Meshes that form the port-side fishing boom assembly in the GLB.
@@ -24,10 +28,6 @@ const PIVOT_OBJECT_NAME = "Cylinder.004";
 const BOOM_OUTWARD_ROTATION_Y = Math.PI;
 const BOOM_ELEVATION_AXIS = new THREE.Vector3(1, 0, 0);
 
-export const BOOM_ELEVATION_MIN_RAD = THREE.MathUtils.degToRad(-18);
-export const BOOM_ELEVATION_MAX_RAD = THREE.MathUtils.degToRad(52);
-export const BOOM_ELEVATION_DEFAULT_RAD = THREE.MathUtils.degToRad(8);
-
 /**
  * Reorients the fishing boom, winch support and pulley from inboard (over deck)
  * to outboard (over the water), then pitches the assembly about the winch base.
@@ -35,7 +35,7 @@ export const BOOM_ELEVATION_DEFAULT_RAD = THREE.MathUtils.degToRad(8);
 export class FishingBoomAssemblyRig {
   private readonly mountPivot: THREE.Group;
   private readonly elevationPivot: THREE.Group;
-  private elevationRad = BOOM_ELEVATION_DEFAULT_RAD;
+  private elevationRad = getBoomElevationDefaultRad();
 
   private constructor(mountPivot: THREE.Group, elevationPivot: THREE.Group) {
     this.mountPivot = mountPivot;
@@ -86,11 +86,7 @@ export class FishingBoomAssemblyRig {
   }
 
   setElevation(angleRad: number): void {
-    this.elevationRad = THREE.MathUtils.clamp(
-      angleRad,
-      BOOM_ELEVATION_MIN_RAD,
-      BOOM_ELEVATION_MAX_RAD
-    );
+    this.elevationRad = clampBoomElevationRad(angleRad);
     this.elevationPivot.quaternion.setFromAxisAngle(BOOM_ELEVATION_AXIS, this.elevationRad);
     this.elevationPivot.updateMatrixWorld(true);
   }

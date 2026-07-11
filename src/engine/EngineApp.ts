@@ -4,7 +4,7 @@ import { BoatController, type BoatControlState } from "../boat/BoatController";
 import { BoatPhysics } from "../boat/BoatPhysics";
 import { BoatPlaceholder } from "../boat/BoatPlaceholder";
 import { FishingController, type FishingControlState } from "../fishing/FishingController";
-import { BOOM_ELEVATION_DEFAULT_RAD } from "../fishing/FishingBoomAssemblyRig";
+import { getBoomElevationDefaultRad, setBoomElevationLimitsDeg, boomElevationRadToDeg, getBoomElevationLimitsDeg } from "../fishing/boomElevationLimits";
 import { FishingRopeSystem } from "../fishing/FishingRopeSystem";
 import { OceanPhysicsSampler } from "../ocean/OceanPhysicsSampler";
 import { OceanRenderer } from "../ocean/OceanRenderer";
@@ -134,6 +134,12 @@ export class EngineApp {
       ropeRadius: settings.fishingRopeRadius,
       renderMode: settings.fishingRopeRenderMode
     });
+    setBoomElevationLimitsDeg({
+      minDeg: settings.fishingBoomMinDeg,
+      maxDeg: settings.fishingBoomMaxDeg,
+      defaultDeg: settings.fishingBoomDefaultDeg
+    });
+    this.fishingController.applyBoomLimits();
     this.syncFirstPersonMode(settings.firstPerson);
   }
 
@@ -264,7 +270,7 @@ export class EngineApp {
     let fishingControl: FishingControlState = {
       reel: 0,
       boom: 0,
-      boomElevationRad: BOOM_ELEVATION_DEFAULT_RAD
+      boomElevationRad: getBoomElevationDefaultRad()
     };
 
     if (!this.settings.paused) {
@@ -294,7 +300,7 @@ export class EngineApp {
     const tunedWeather = this.applyDebugWeatherOverrides(this.weatherCurrent);
     if (!this.settings.paused && boatControl) {
       this.updateBoat(boatControl, tunedWeather, deltaSeconds);
-      this.updateFishingRope(fishingControl.reel, deltaSeconds);
+      this.updateFishingRope(fishingControl.reel, fishingControl.boomElevationRad, deltaSeconds);
     }
 
     if (this.firstPersonActive) {
@@ -392,9 +398,18 @@ export class EngineApp {
     this.boatPlaceholder.syncFromPhysics(this.boatPhysics);
   }
 
-  private updateFishingRope(reel: number, deltaSeconds: number): void {
+  private updateFishingRope(reel: number, boomElevationRad: number, deltaSeconds: number): void {
+    const limits = getBoomElevationLimitsDeg();
+    const boomMetrics: FishingDebugState = {
+      paidOutLengthM: 0,
+      ropeTension: 0,
+      boomElevationDeg: boomElevationRadToDeg(boomElevationRad),
+      boomMinDeg: limits.minDeg,
+      boomMaxDeg: limits.maxDeg
+    };
+
     if (!this.settings.fishingRopeEnabled) {
-      this.fishingMetrics = null;
+      this.fishingMetrics = this.boatPlaceholder.isModelReady() ? boomMetrics : null;
       this.fishingRopeSystem.group.visible = false;
       return;
     }
@@ -409,17 +424,18 @@ export class EngineApp {
 
     this.fishingRopeSystem.group.visible = this.fishingRopeBound;
     if (!this.fishingRopeBound) {
-      this.fishingMetrics = null;
+      this.fishingMetrics = this.boatPlaceholder.isModelReady() ? boomMetrics : null;
       return;
     }
 
-    this.fishingMetrics = this.fishingRopeSystem.update(deltaSeconds, {
+    const ropeMetrics = this.fishingRopeSystem.update(deltaSeconds, {
       reel,
       boatGroup: this.boatPlaceholder.group,
       originOffset: this.originOffsetMeters,
       sampler: this.boatPhysicsSampler,
       collider: this.boatPlaceholder.getColliderBVH()
     });
+    this.fishingMetrics = { ...ropeMetrics, ...boomMetrics };
   }
 
   private updateSeaState(weather: WeatherState, deltaSeconds: number): void {

@@ -5,7 +5,7 @@ import boatModelUrl from "../../assets/fishing_boat.glb?url";
 import { BoatControlRig } from "./BoatControlRig";
 import type { BoatControlState } from "./BoatController";
 import { FishingControlRig } from "../fishing/FishingControlRig";
-import { BOOM_ELEVATION_DEFAULT_RAD } from "../fishing/FishingBoomAssemblyRig";
+import { getBoomElevationDefaultRad } from "../fishing/boomElevationLimits";
 import type { FishingControlState } from "../fishing/FishingController";
 import { DEFAULT_BOAT_CONFIG, type BoatConfig, type BoatPhysics } from "./BoatPhysics";
 
@@ -70,7 +70,7 @@ export class BoatPlaceholder {
   private controlRudder = 0;
   private fishingReel = 0;
   private fishingBoom = 0;
-  private fishingBoomElevationRad = BOOM_ELEVATION_DEFAULT_RAD;
+  private fishingBoomElevationRad = getBoomElevationDefaultRad();
 
   constructor(config: BoatConfig = DEFAULT_BOAT_CONFIG) {
     this.config = config;

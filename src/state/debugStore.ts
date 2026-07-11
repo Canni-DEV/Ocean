@@ -1,5 +1,6 @@
 import { writable } from "svelte/store";
 import type { DebugSettings, EngineMetrics } from "../engine/types";
+import { DEFAULT_BOOM_ELEVATION_LIMITS_DEG } from "../fishing/boomElevationLimits";
 
 export const DEFAULT_DEBUG_SETTINGS: DebugSettings = {
   quality: "medium",
@@ -40,7 +41,10 @@ export const DEFAULT_DEBUG_SETTINGS: DebugSettings = {
   fishingRopeMinLengthM: 1,
   fishingRopeMaxLengthM: 50,
   fishingRopeInitialLengthM: 2,
-  fishingReelSpeedMs: 0.5
+  fishingReelSpeedMs: 0.5,
+  fishingBoomMinDeg: DEFAULT_BOOM_ELEVATION_LIMITS_DEG.minDeg,
+  fishingBoomMaxDeg: DEFAULT_BOOM_ELEVATION_LIMITS_DEG.maxDeg,
+  fishingBoomDefaultDeg: DEFAULT_BOOM_ELEVATION_LIMITS_DEG.defaultDeg
 };
 
 export const DEFAULT_ENGINE_METRICS: EngineMetrics = {
