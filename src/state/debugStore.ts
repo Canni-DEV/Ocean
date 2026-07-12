@@ -1,5 +1,6 @@
 import { writable } from "svelte/store";
 import type { DebugSettings, EngineMetrics } from "../engine/types";
+import { DEFAULT_BOOM_ELEVATION_LIMITS_DEG } from "../fishing/boomElevationLimits";
 
 export const DEFAULT_DEBUG_SETTINGS: DebugSettings = {
   quality: "medium",
@@ -15,6 +16,7 @@ export const DEFAULT_DEBUG_SETTINGS: DebugSettings = {
   showFoam: true,
   showRain: true,
   showClouds: true,
+  boatWaterInteraction: true,
   weatherTransitionSeconds: 45,
   wireframe: false,
   paused: false,
@@ -24,13 +26,24 @@ export const DEFAULT_DEBUG_SETTINGS: DebugSettings = {
   choppiness: 1.25,
   foamIntensity: 1,
   foamDecay: 0.28,
+  boatWakeIntensity: 1,
+  boatWakeFoamIntensity: 1,
   waterTurbidity: 0.22,
   cloudCoverageBias: 0,
   cloudDensityBias: 0,
   exposureBias: 0,
-  boatUseModel: false,
   boatLightsOn: false,
-  firstPerson: false
+  firstPerson: false,
+  fishingRopeEnabled: true,
+  fishingRopeRadius: 0.008,
+  fishingRopeRenderMode: "tube",
+  fishingRopeMinLengthM: 0.2,
+  fishingRopeMaxLengthM: 50,
+  fishingRopeInitialLengthM: 0.5,
+  fishingReelSpeedMs: 0.5,
+  fishingBoomMinDeg: DEFAULT_BOOM_ELEVATION_LIMITS_DEG.minDeg,
+  fishingBoomMaxDeg: DEFAULT_BOOM_ELEVATION_LIMITS_DEG.maxDeg,
+  fishingBoomDefaultDeg: DEFAULT_BOOM_ELEVATION_LIMITS_DEG.defaultDeg
 };
 
 export const DEFAULT_ENGINE_METRICS: EngineMetrics = {
@@ -42,11 +55,13 @@ export const DEFAULT_ENGINE_METRICS: EngineMetrics = {
   oceanComputeMs: null,
   cloudComputeMs: null,
   depthPrepassMs: null,
+  boatInteractionComputeMs: null,
   seaLevelAtCameraM: null,
   worldTimeHours: DEFAULT_DEBUG_SETTINGS.worldTimeHours,
   camera: { x: 0, y: 14, z: 32, yawDeg: 0, pitchDeg: -12 },
   boat: null,
   firstPerson: null,
+  fishing: null,
   originOffsetMeters: { x: 0, z: 0 },
   status: "booting",
   error: null

@@ -2,9 +2,13 @@ import * as THREE from "three/webgpu";
 import { AtmosphereSystem } from "../atmosphere/AtmosphereSystem";
 import { BoatController, type BoatControlState } from "../boat/BoatController";
 import { BoatPhysics } from "../boat/BoatPhysics";
-import { BoatPlaceholder } from "../boat/BoatPlaceholder";
+import { BoatVisual } from "../boat/BoatVisual";
+import { FishingController, type FishingControlState } from "../fishing/FishingController";
+import { getBoomElevationDefaultRad, setBoomElevationLimitsDeg, boomElevationRadToDeg, getBoomElevationLimitsDeg } from "../fishing/boomElevationLimits";
+import { FishingRopeSystem } from "../fishing/FishingRopeSystem";
 import { OceanPhysicsSampler } from "../ocean/OceanPhysicsSampler";
 import { OceanRenderer } from "../ocean/OceanRenderer";
+import { BoatWaterInteraction } from "../ocean/BoatWaterInteraction";
 import { FirstPersonController } from "../player/FirstPersonController";
 import { OceanSimulation, OCEAN_QUALITY } from "../ocean/simulation/OceanSimulation";
 import { cloneWeather, easeWeatherProgress, lerpWeather, WEATHER_PRESETS } from "../state/weather";
@@ -12,7 +16,7 @@ import { buildSeaState, lerpSeaState, type SeaStateParams } from "../state/seaSt
 import { FrameStats } from "./FrameStats";
 import { InputController } from "./InputController";
 import { SceneDepthPass } from "./SceneDepthPass";
-import type { DebugSettings, EngineMetrics, QualityTier, WeatherPresetName, WeatherState } from "./types";
+import type { DebugSettings, EngineMetrics, FishingDebugState, QualityTier, WeatherPresetName, WeatherState } from "./types";
 
 type EngineAppOptions = {
   canvas: HTMLCanvasElement;
@@ -29,8 +33,10 @@ export class EngineApp {
   private readonly scene = new THREE.Scene();
   private readonly input: InputController;
   private readonly boatController = new BoatController();
+  private readonly fishingController = new FishingController();
   private readonly boatPhysics = new BoatPhysics();
-  private readonly boatPlaceholder = new BoatPlaceholder();
+  private readonly boatVisual = new BoatVisual();
+  private readonly fishingRopeSystem: FishingRopeSystem;
   private readonly firstPerson: FirstPersonController;
   private readonly sceneDepthPass = new SceneDepthPass();
   private readonly stats = new FrameStats();
@@ -38,6 +44,7 @@ export class EngineApp {
   private renderer: THREE.WebGPURenderer | null = null;
   private simulation: OceanSimulation | null = null;
   private ocean: OceanRenderer | null = null;
+  private boatInteraction: BoatWaterInteraction | null = null;
   private physics: OceanPhysicsSampler | null = null;
   private boatPhysicsSampler: OceanPhysicsSampler | null = null;
   private atmosphere: AtmosphereSystem | null = null;
@@ -56,10 +63,13 @@ export class EngineApp {
   private seaStateCurrent: SeaStateParams | null = null;
   private originOffsetMeters = { x: 0, z: 0 };
   private oceanComputeMs: number | null = null;
+  private boatInteractionComputeMs: number | null = null;
   private cloudComputeMs: number | null = null;
   private depthPrepassMs: number | null = null;
   private simulationTimeSeconds = 0;
   private firstPersonActive = false;
+  private fishingMetrics: FishingDebugState | null = null;
+  private fishingRopeBound = false;
   private status: EngineMetrics["status"] = "booting";
   private error: string | null = null;
 
@@ -75,6 +85,16 @@ export class EngineApp {
     this.weatherCurrent = cloneWeather(WEATHER_PRESETS[this.weatherPreset]);
     this.input = new InputController(this.canvas);
     this.firstPerson = new FirstPersonController(this.input.camera, this.canvas);
+    this.fishingRopeSystem = new FishingRopeSystem({
+      enabled: options.initialSettings.fishingRopeEnabled,
+      minLengthM: options.initialSettings.fishingRopeMinLengthM,
+      maxLengthM: options.initialSettings.fishingRopeMaxLengthM,
+      initialLengthM: options.initialSettings.fishingRopeInitialLengthM,
+      reelSpeedMs: options.initialSettings.fishingReelSpeedMs,
+      ropeRadius: options.initialSettings.fishingRopeRadius,
+      renderMode: options.initialSettings.fishingRopeRenderMode,
+      segmentCount: 28
+    });
   }
 
   start(): void {
@@ -103,8 +123,22 @@ export class EngineApp {
 
     this.ocean?.applySettings(settings);
     this.atmosphere?.applySettings(settings);
-    this.boatPlaceholder.setUseModel(settings.boatUseModel || settings.firstPerson);
-    this.boatPlaceholder.setLightsOn(settings.boatLightsOn);
+    this.boatVisual.setLightsOn(settings.boatLightsOn);
+    this.fishingRopeSystem.applySettings({
+      enabled: settings.fishingRopeEnabled,
+      minLengthM: settings.fishingRopeMinLengthM,
+      maxLengthM: settings.fishingRopeMaxLengthM,
+      initialLengthM: settings.fishingRopeInitialLengthM,
+      reelSpeedMs: settings.fishingReelSpeedMs,
+      ropeRadius: settings.fishingRopeRadius,
+      renderMode: settings.fishingRopeRenderMode
+    });
+    setBoomElevationLimitsDeg({
+      minDeg: settings.fishingBoomMinDeg,
+      maxDeg: settings.fishingBoomMaxDeg,
+      defaultDeg: settings.fishingBoomDefaultDeg
+    });
+    this.fishingController.applyBoomLimits();
     this.syncFirstPersonMode(settings.firstPerson);
   }
 
@@ -115,8 +149,11 @@ export class EngineApp {
     this.input.dispose();
     this.firstPerson.dispose();
     this.boatController.dispose();
-    this.boatPlaceholder.dispose();
+    this.fishingController.dispose();
+    this.fishingRopeSystem.dispose();
+    this.boatVisual.dispose();
     this.ocean?.dispose();
+    this.boatInteraction?.dispose();
     this.simulation?.dispose();
     this.atmosphere?.dispose();
     this.sceneDepthPass.dispose();
@@ -126,7 +163,8 @@ export class EngineApp {
   resetBoat(): void {
     const waterHeight = this.boatPhysicsSampler?.getHeightAt(0, 0) ?? this.physics?.getHeightAt(0, 0) ?? null;
     this.boatPhysics.resetToWorldOrigin(this.originOffsetMeters, waterHeight);
-    this.boatPlaceholder.syncFromPhysics(this.boatPhysics);
+    this.boatInteraction?.resetHistory();
+    this.boatVisual.syncFromPhysics(this.boatPhysics);
   }
 
   private async init(): Promise<void> {
@@ -152,9 +190,9 @@ export class EngineApp {
       this.createOcean(this.settings.quality);
       this.atmosphere.applySettings(this.settings);
       this.ocean?.applySettings(this.settings);
-      this.boatPlaceholder.setUseModel(this.settings.boatUseModel);
-      this.boatPlaceholder.setLightsOn(this.settings.boatLightsOn);
-      this.scene.add(this.boatPlaceholder.group);
+      this.boatVisual.setLightsOn(this.settings.boatLightsOn);
+      this.scene.add(this.boatVisual.group);
+      this.scene.add(this.fishingRopeSystem.group);
       this.resetBoat();
       this.syncFirstPersonMode(this.settings.firstPerson);
 
@@ -173,16 +211,19 @@ export class EngineApp {
   private createOcean(tier: QualityTier): void {
     this.activeQuality = tier;
     const simulation = new OceanSimulation(tier);
+    const boatInteraction = new BoatWaterInteraction(tier);
     const ocean = new OceanRenderer({
       scene: this.scene,
       simulation,
+      boatInteraction,
       cloudShadows: this.atmosphere?.cloudShadows ?? null
     });
     ocean.applySettings(this.settings);
     this.simulation = simulation;
+    this.boatInteraction = boatInteraction;
     this.ocean = ocean;
-    this.physics = new OceanPhysicsSampler(simulation);
-    this.boatPhysicsSampler = new OceanPhysicsSampler(simulation);
+    this.physics = new OceanPhysicsSampler(simulation, boatInteraction);
+    this.boatPhysicsSampler = new OceanPhysicsSampler(simulation, boatInteraction);
     this.seaStateCurrent = null;
 
     const quality = OCEAN_QUALITY[tier];
@@ -192,8 +233,10 @@ export class EngineApp {
 
   private rebuildOcean(tier: QualityTier): void {
     this.ocean?.dispose();
+    this.boatInteraction?.dispose();
     this.simulation?.dispose();
     this.ocean = null;
+    this.boatInteraction = null;
     this.simulation = null;
     this.physics = null;
     this.boatPhysicsSampler = null;
@@ -222,37 +265,46 @@ export class EngineApp {
     this.lastFrameMs = now;
     const statStart = this.stats.begin();
     let boatControl: BoatControlState | null = null;
+    let fishingControl: FishingControlState = {
+      reel: 0,
+      boom: 0,
+      boomElevationRad: getBoomElevationDefaultRad()
+    };
 
     if (!this.settings.paused) {
       if (this.firstPersonActive) {
-        const collider = this.boatPlaceholder.getColliderBVH();
+        const collider = this.boatVisual.getColliderBVH();
         if (collider) {
-          this.firstPerson.update(deltaSeconds, this.boatPlaceholder.group, collider);
+          this.firstPerson.update(deltaSeconds, this.boatVisual.group, collider);
         }
       } else {
         this.input.update(deltaSeconds);
       }
 
       boatControl = this.boatController.update(deltaSeconds);
+      fishingControl = this.fishingController.update(deltaSeconds);
+      this.boatVisual.setControlState(boatControl);
+      this.boatVisual.setFishingState(fishingControl);
       this.worldTimeHours = (this.worldTimeHours + (deltaSeconds * this.settings.timeScale) / 3600) % 24;
       this.updateWeather(deltaSeconds);
       this.applyFloatingOrigin();
       this.simulationTimeSeconds += deltaSeconds;
     }
 
-    if (this.settings.firstPerson && !this.firstPersonActive && this.boatPlaceholder.isColliderReady()) {
+    if (this.settings.firstPerson && !this.firstPersonActive && this.boatVisual.isColliderReady()) {
       this.syncFirstPersonMode(true);
     }
 
     const tunedWeather = this.applyDebugWeatherOverrides(this.weatherCurrent);
     if (!this.settings.paused && boatControl) {
       this.updateBoat(boatControl, tunedWeather, deltaSeconds);
+      this.updateFishingRope(fishingControl.reel, fishingControl.boomElevationRad, deltaSeconds);
     }
 
     if (this.firstPersonActive) {
-      const collider = this.boatPlaceholder.getColliderBVH();
+      const collider = this.boatVisual.getColliderBVH();
       if (collider) {
-        this.firstPerson.update(0, this.boatPlaceholder.group, collider);
+        this.firstPerson.update(0, this.boatVisual.group, collider);
       }
     }
 
@@ -272,8 +324,15 @@ export class EngineApp {
     this.updateSeaState(tunedWeather, deltaSeconds);
     if (!this.settings.paused) {
       this.simulation.update(this.renderer, this.simulationTimeSeconds, deltaSeconds);
+      this.boatInteraction?.update({
+        renderer: this.renderer,
+        boat: this.boatPhysics.getWaterInteractionState(this.originOffsetMeters),
+        settings: this.settings,
+        deltaSeconds
+      });
     }
     this.oceanComputeMs = this.simulation.computeMs;
+    this.boatInteractionComputeMs = this.boatInteraction?.computeMs ?? null;
 
     this.ocean.update(
       this.input.camera,
@@ -306,7 +365,7 @@ export class EngineApp {
       this.boatPhysics.position.z + this.originOffsetMeters.z
     );
     if (this.settings.paused) {
-      this.boatPlaceholder.syncFromPhysics(this.boatPhysics);
+      this.boatVisual.syncFromPhysics(this.boatPhysics);
     }
 
     try {
@@ -334,7 +393,47 @@ export class EngineApp {
       weather,
       originOffsetMeters: this.originOffsetMeters
     });
-    this.boatPlaceholder.syncFromPhysics(this.boatPhysics);
+    this.boatVisual.syncFromPhysics(this.boatPhysics);
+  }
+
+  private updateFishingRope(reel: number, boomElevationRad: number, deltaSeconds: number): void {
+    const limits = getBoomElevationLimitsDeg();
+    const boomMetrics: FishingDebugState = {
+      paidOutLengthM: 0,
+      ropeTension: 0,
+      boomElevationDeg: boomElevationRadToDeg(boomElevationRad),
+      boomMinDeg: limits.minDeg,
+      boomMaxDeg: limits.maxDeg
+    };
+
+    if (!this.settings.fishingRopeEnabled) {
+      this.fishingMetrics = this.boatVisual.isModelReady() ? boomMetrics : null;
+      this.fishingRopeSystem.group.visible = false;
+      return;
+    }
+
+    if (!this.fishingRopeBound && this.boatVisual.isModelReady()) {
+      const rig = this.boatVisual.getFishingRig();
+      if (rig) {
+        this.fishingRopeSystem.bind(rig, this.boatVisual.group);
+        this.fishingRopeBound = this.fishingRopeSystem.isBound();
+      }
+    }
+
+    this.fishingRopeSystem.group.visible = this.fishingRopeBound;
+    if (!this.fishingRopeBound) {
+      this.fishingMetrics = this.boatVisual.isModelReady() ? boomMetrics : null;
+      return;
+    }
+
+    const ropeMetrics = this.fishingRopeSystem.update(deltaSeconds, {
+      reel,
+      boatGroup: this.boatVisual.group,
+      originOffset: this.originOffsetMeters,
+      sampler: this.boatPhysicsSampler,
+      collider: this.boatVisual.getColliderBVH()
+    });
+    this.fishingMetrics = { ...ropeMetrics, ...boomMetrics };
   }
 
   private updateSeaState(weather: WeatherState, deltaSeconds: number): void {
@@ -383,11 +482,12 @@ export class EngineApp {
     position.x = 0;
     position.z = 0;
     this.boatPhysics.applyOriginShift(shiftX, shiftZ);
-    this.boatPlaceholder.syncFromPhysics(this.boatPhysics);
+    this.fishingRopeSystem.applyOriginShift(shiftX, shiftZ);
+    this.boatVisual.syncFromPhysics(this.boatPhysics);
   }
 
   private syncFirstPersonMode(requested: boolean): void {
-    if (requested && !this.boatPlaceholder.isColliderReady()) {
+    if (requested && !this.boatVisual.isColliderReady()) {
       this.firstPersonActive = false;
       this.firstPerson.setEnabled(false);
       this.input.setEnabled(true);
@@ -401,9 +501,9 @@ export class EngineApp {
     this.input.setEnabled(!requested);
 
     if (requested) {
-      const collider = this.boatPlaceholder.getColliderBVH();
+      const collider = this.boatVisual.getColliderBVH();
       if (collider) {
-        this.firstPerson.spawnOnDeck(collider, this.boatPlaceholder.getDefaultSpawnLocalPosition());
+        this.firstPerson.spawnOnDeck(collider, this.boatVisual.getDefaultSpawnLocalPosition());
       }
       return;
     }
@@ -440,6 +540,7 @@ export class EngineApp {
       cpuMs: this.stats.cpuMs,
       gpuMs: null,
       oceanComputeMs: this.oceanComputeMs,
+      boatInteractionComputeMs: this.boatInteractionComputeMs,
       cloudComputeMs: this.cloudComputeMs,
       depthPrepassMs: this.depthPrepassMs,
       seaLevelAtCameraM: seaLevel ?? null,
@@ -453,6 +554,7 @@ export class EngineApp {
       },
       boat: this.boatPhysics.getMetrics(this.originOffsetMeters),
       firstPerson: this.firstPersonActive ? this.firstPerson.getMetrics() : null,
+      fishing: this.fishingMetrics,
       originOffsetMeters: { ...this.originOffsetMeters },
       status: this.status,
       error: this.error

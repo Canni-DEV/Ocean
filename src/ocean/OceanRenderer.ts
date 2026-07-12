@@ -11,6 +11,7 @@ import {
   positionGeometry,
   positionWorld,
   smoothstep,
+  step,
   texture,
   transformNormalToView,
   uniform,
@@ -21,6 +22,7 @@ import {
 } from "three/tsl";
 import type { DebugRenderMode, DebugSettings, EnvironmentState, WeatherState } from "../engine/types";
 import type { CloudShadowMap } from "../atmosphere/clouds/CloudShadowMap";
+import type { BoatWaterInteraction } from "./BoatWaterInteraction";
 import type { OceanSimulation } from "./simulation/OceanSimulation";
 
 type NodeRef = any;
@@ -28,6 +30,7 @@ type NodeRef = any;
 type OceanRendererOptions = {
   scene: THREE.Scene;
   simulation: OceanSimulation;
+  boatInteraction: BoatWaterInteraction | null;
   /** Projected volumetric cloud shadow map (null disables per-pixel shadows). */
   cloudShadows: CloudShadowMap | null;
 };
@@ -43,6 +46,11 @@ type OceanUniformNodes = {
   time: AnyUniform<number>;
   absorptionColor: AnyUniform<THREE.Color>;
   scatterColor: AnyUniform<THREE.Color>;
+  boatInteractionOrigin: AnyUniform<THREE.Vector2>;
+  boatInteractionSize: AnyUniform<number>;
+  boatInteractionUvTexel: AnyUniform<number>;
+  boatInteractionCellMeters: AnyUniform<number>;
+  boatInteractionEnabled: AnyUniform<number>;
   sunDirection: AnyUniform<THREE.Vector3>;
   sunColor: AnyUniform<THREE.Color>;
   sunVisibility: AnyUniform<number>;
@@ -50,6 +58,7 @@ type OceanUniformNodes = {
   debugHeight: AnyUniform<number>;
   debugNormal: AnyUniform<number>;
   debugFoam: AnyUniform<number>;
+  debugBoatInteraction: AnyUniform<number>;
   debugJacobian: AnyUniform<number>;
   debugSlope: AnyUniform<number>;
   debugCascades: AnyUniform<number>;
@@ -134,19 +143,25 @@ export class OceanRenderer {
   private readonly depthMaterial: THREE.NodeMaterial;
   private readonly uniforms: OceanUniformNodes;
   private readonly derivativeNodes: NodeRef[];
+  private readonly boatInteraction: BoatWaterInteraction | null;
+  private readonly boatDynamicsNode: NodeRef | null;
+  private readonly boatFoamNode: NodeRef | null;
   private visible = true;
 
   constructor(options: OceanRendererOptions) {
     this.simulation = options.simulation;
+    this.boatInteraction = options.boatInteraction;
 
     const quality = this.simulation.quality;
     this.geometry = buildRadialGrid(quality.meshRings, quality.meshSectors, quality.meshInnerRadius);
 
-    const shader = createWaterMaterial(this.simulation, options.cloudShadows);
+    const shader = createWaterMaterial(this.simulation, options.boatInteraction, options.cloudShadows);
     this.material = shader.material;
     this.depthMaterial = shader.depthMaterial;
     this.uniforms = shader.uniforms;
     this.derivativeNodes = shader.derivativeNodes;
+    this.boatDynamicsNode = shader.boatDynamicsNode;
+    this.boatFoamNode = shader.boatFoamNode;
 
     this.mesh = new THREE.Mesh(this.geometry, this.material);
     this.mesh.name = "FFT spectral ocean surface";
@@ -190,6 +205,19 @@ export class OceanRenderer {
     this.uniforms.time.value = timeSeconds;
     this.uniforms.absorptionColor.value.set(environment.waterAbsorptionColor);
     this.uniforms.scatterColor.value.set(environment.waterScatterColor);
+    if (this.boatInteraction && this.boatDynamicsNode && this.boatFoamNode) {
+      const interaction = this.boatInteraction.sampleState;
+      this.boatDynamicsNode.value = interaction.dynamicsTexture;
+      this.boatFoamNode.value = interaction.foamTexture;
+      this.uniforms.boatInteractionOrigin.value.copy(interaction.origin);
+      this.uniforms.boatInteractionSize.value = interaction.sizeMeters;
+      this.uniforms.boatInteractionUvTexel.value = 1 / interaction.resolution;
+      this.uniforms.boatInteractionCellMeters.value = interaction.sizeMeters / interaction.resolution;
+      this.uniforms.boatInteractionEnabled.value =
+        settings.boatWaterInteraction && interaction.enabled ? 1 : 0;
+    } else {
+      this.uniforms.boatInteractionEnabled.value = 0;
+    }
     this.uniforms.sunColor.value.set(environment.sunColor);
     this.uniforms.sunVisibility.value = environment.celestial.sunVisibility;
     this.uniforms.sunDirectMask.value = environment.celestial.sunDirectMask;
@@ -216,6 +244,7 @@ export class OceanRenderer {
     this.uniforms.debugHeight.value = mode === "height" ? 1 : 0;
     this.uniforms.debugNormal.value = mode === "normal" ? 1 : 0;
     this.uniforms.debugFoam.value = mode === "foam" ? 1 : 0;
+    this.uniforms.debugBoatInteraction.value = mode === "boatInteraction" ? 1 : 0;
     this.uniforms.debugJacobian.value = mode === "jacobian" ? 1 : 0;
     this.uniforms.debugSlope.value = mode === "slope" ? 1 : 0;
     this.uniforms.debugCascades.value = mode === "cascades" ? 1 : 0;
@@ -233,12 +262,15 @@ function cascadeFades(patchSize: number): { dispEnd: number; normalEnd: number }
 
 function createWaterMaterial(
   simulation: OceanSimulation,
+  boatInteraction: BoatWaterInteraction | null,
   cloudShadows: CloudShadowMap | null
 ): {
   material: MeshPhysicalNodeMaterial;
   depthMaterial: THREE.NodeMaterial;
   uniforms: OceanUniformNodes;
   derivativeNodes: NodeRef[];
+  boatDynamicsNode: NodeRef | null;
+  boatFoamNode: NodeRef | null;
 } {
   const uniforms: OceanUniformNodes = {
     worldOffset: u(new THREE.Vector2()),
@@ -249,6 +281,11 @@ function createWaterMaterial(
     time: u(0),
     absorptionColor: u(new THREE.Color("#03181f")),
     scatterColor: u(new THREE.Color("#0e5e52")),
+    boatInteractionOrigin: u(new THREE.Vector2()),
+    boatInteractionSize: u(1),
+    boatInteractionUvTexel: u(1 / 128),
+    boatInteractionCellMeters: u(1),
+    boatInteractionEnabled: u(0),
     sunDirection: u(new THREE.Vector3(0, 1, 0)),
     sunColor: u(new THREE.Color("#fff1c2")),
     sunVisibility: u(1),
@@ -256,6 +293,7 @@ function createWaterMaterial(
     debugHeight: u(0),
     debugNormal: u(0),
     debugFoam: u(0),
+    debugBoatInteraction: u(0),
     debugJacobian: u(0),
     debugSlope: u(0),
     debugCascades: u(0),
@@ -265,6 +303,32 @@ function createWaterMaterial(
   const cascades = simulation.cascades;
   const displacementNodes = cascades.map((cascade) => texture(cascade.displacementTexture));
   const derivativeNodes = cascades.map((cascade) => texture(cascade.derivativeTextures[0]));
+  const boatDynamicsNode = boatInteraction ? texture(boatInteraction.currentDynamicsTexture) : null;
+  const boatFoamNode = boatInteraction ? texture(boatInteraction.currentFoamTexture) : null;
+
+  const boatInteractionUvAndMask = (worldXZ: NodeRef, uvOffset: NodeRef = vec2(0, 0)): { uv: NodeRef; mask: NodeRef } => {
+    const uv = worldXZ.sub(uniforms.boatInteractionOrigin).div(uniforms.boatInteractionSize).add(uvOffset);
+    const mask = step(float(0), uv.x)
+      .mul(step(uv.x, float(1)))
+      .mul(step(float(0), uv.y))
+      .mul(step(uv.y, float(1)))
+      .mul(uniforms.boatInteractionEnabled);
+    return { uv, mask };
+  };
+
+  const sampleBoatDynamics = (worldXZ: NodeRef, uvOffset: NodeRef = vec2(0, 0)): NodeRef => {
+    if (!boatDynamicsNode) return vec4(0, 0, 0, 0);
+
+    const sample = boatInteractionUvAndMask(worldXZ, uvOffset);
+    return (boatDynamicsNode as any).sample(sample.uv).level(float(0)).mul(sample.mask);
+  };
+
+  const sampleBoatFoam = (worldXZ: NodeRef): NodeRef => {
+    if (!boatFoamNode) return vec4(0, 0, 0, 0);
+
+    const sample = boatInteractionUvAndMask(worldXZ);
+    return (boatFoamNode as any).sample(sample.uv).level(float(0)).mul(sample.mask);
+  };
 
   const material = new MeshPhysicalNodeMaterial();
   material.metalness = 0;
@@ -287,6 +351,11 @@ function createWaterMaterial(
     displacement = displacement.add(sampleNode.xyz.mul(fade));
   });
   displacement = displacement.mul(uniforms.displacementToggle);
+  const boatInteractionVertex = sampleBoatDynamics(sampleXZ);
+  const boatInteractionMask = boatInteractionUvAndMask(sampleXZ).mask;
+  displacement = displacement.add(
+    vec3(0, boatInteractionVertex.r, 0).mul(uniforms.displacementToggle)
+  );
 
   const displacedPosition = positionGeometry.add(displacement);
   material.positionNode = displacedPosition;
@@ -302,6 +371,8 @@ function createWaterMaterial(
   const vHeight: NodeRef = vertexStage(displacement.y);
   const vSampleXZ: NodeRef = vertexStage(sampleXZ);
   const vDistance: NodeRef = vertexStage(cameraDistance);
+  const vBoatInteraction: NodeRef = vertexStage(boatInteractionVertex);
+  const vBoatInteractionMask: NodeRef = vertexStage(boatInteractionMask);
 
   // ---------------------------------------------------------------- fragment
   let slope: NodeRef = vec2(0, 0);
@@ -333,17 +404,38 @@ function createWaterMaterial(
   const rippleFade = float(1).sub(smoothstep(float(30), float(140), vDistance));
   slope = slope.add(vec2(rippleA, rippleB).mul(rippleStrength).mul(rippleFade));
 
+  const interactionTexel = uniforms.boatInteractionUvTexel;
+  const interactionCell = uniforms.boatInteractionCellMeters.mul(2);
+  const interactionLeft = sampleBoatDynamics(vSampleXZ, vec2(interactionTexel.negate(), 0));
+  const interactionRight = sampleBoatDynamics(vSampleXZ, vec2(interactionTexel, 0));
+  const interactionDown = sampleBoatDynamics(vSampleXZ, vec2(0, interactionTexel.negate()));
+  const interactionUp = sampleBoatDynamics(vSampleXZ, vec2(0, interactionTexel));
+  const interactionSlope = vec2(
+    interactionRight.r.sub(interactionLeft.r).div(interactionCell),
+    interactionUp.r.sub(interactionDown.r).div(interactionCell)
+  );
+  slope = slope.add(interactionSlope.mul(uniforms.displacementToggle));
+
   const worldNormal = vec3(slope.x.negate(), 1, slope.y.negate()).normalize();
 
-  // Foam: temporal accumulation from the simulation + procedural grain
+  // Foam: temporal accumulation from the simulation plus separate boat sources.
+  const boatFoam = sampleBoatFoam(vSampleXZ);
+  const boatFoamWeighted = boatFoam.r.mul(0.9).max(boatFoam.g).max(boatFoam.b.mul(0.9));
   const foamGrain = mx_noise_float(vSampleXZ.mul(0.9)).mul(0.5).add(0.5);
   const foamGrainFine = mx_noise_float(vSampleXZ.mul(3.7).add(uniforms.time.mul(0.06))).mul(0.5).add(0.5);
-  const foamAmount = foamRaw
+  const oceanFoamAmount = foamRaw
     .mul(uniforms.foamIntensity)
     .mul(foamGrain.mul(0.45).add(0.62))
     .mul(foamGrainFine.mul(0.35).add(0.72))
     .clamp(0, 1);
-  const foamBlend = smoothstep(float(0.12), float(0.62), foamAmount);
+  const boatFoamAmount = boatFoamWeighted
+    .mul(uniforms.foamIntensity)
+    .mul(foamGrain.mul(0.3).add(0.78))
+    .mul(foamGrainFine.mul(0.24).add(0.82))
+    .clamp(0, 1);
+  const foamAmount = oceanFoamAmount.max(boatFoamAmount);
+  const foamBlend = smoothstep(float(0.12), float(0.62), oceanFoamAmount)
+    .max(smoothstep(float(0.055), float(0.46), boatFoamAmount));
 
   // Water body color: dark absorption base, brighter scatter on crests/turbidity
   const crestLift = vHeight.mul(0.5).add(0.5).clamp(0, 1);
@@ -393,6 +485,12 @@ function createWaterMaterial(
     result = result.add(vec3(heightVis.mul(0.2), heightVis.mul(0.65), heightVis).mul(uniforms.debugHeight));
     result = result.add(worldNormal.mul(0.5).add(0.5).mul(uniforms.debugNormal));
     result = result.add(vec3(foamAmount, foamAmount, foamAmount).mul(uniforms.debugFoam));
+    const positiveBoatHeight = vBoatInteraction.r.max(0).mul(4).clamp(0, 1);
+    const negativeBoatHeight = vBoatInteraction.r.negate().max(0).mul(4).clamp(0, 1);
+    const boatInteractionDebug = vec3(positiveBoatHeight, interactionSlope.length().mul(2).clamp(0, 1), negativeBoatHeight)
+      .mul(vBoatInteractionMask)
+      .add(vec3(boatFoam.r, boatFoam.g, boatFoam.b).mul(0.7));
+    result = result.add(boatInteractionDebug.mul(uniforms.debugBoatInteraction));
     const jacobianVis = jacobianMin.mul(0.5).clamp(0, 1);
     result = result.add(vec3(float(1).sub(jacobianVis), jacobianVis, jacobianVis.mul(0.4)).mul(uniforms.debugJacobian));
     const slopeVis = slope.length().mul(1.4).clamp(0, 1);
@@ -405,6 +503,7 @@ function createWaterMaterial(
   const debugBlend = uniforms.debugHeight
     .add(uniforms.debugNormal)
     .add(uniforms.debugFoam)
+    .add(uniforms.debugBoatInteraction)
     .add(uniforms.debugJacobian)
     .add(uniforms.debugSlope)
     .add(uniforms.debugCascades)
@@ -412,5 +511,5 @@ function createWaterMaterial(
     .clamp(0, 1);
   material.outputNode = mix(output, vec4(debugColor, 1), debugBlend);
 
-  return { material, depthMaterial, uniforms, derivativeNodes };
+  return { material, depthMaterial, uniforms, derivativeNodes, boatDynamicsNode, boatFoamNode };
 }

@@ -22,6 +22,7 @@ export type DebugRenderMode =
   | "height"
   | "normal"
   | "foam"
+  | "boatInteraction"
   | "jacobian"
   | "slope"
   | "cascades"
@@ -113,6 +114,14 @@ export type FirstPersonDebugState = {
   onGround: boolean;
 };
 
+export type FishingDebugState = {
+  paidOutLengthM: number;
+  ropeTension: number;
+  boomElevationDeg: number;
+  boomMinDeg: number;
+  boomMaxDeg: number;
+};
+
 export type EngineMetrics = {
   backend: "webgpu";
   fps: number;
@@ -122,15 +131,19 @@ export type EngineMetrics = {
   oceanComputeMs: number | null;
   cloudComputeMs: number | null;
   depthPrepassMs: number | null;
+  boatInteractionComputeMs: number | null;
   seaLevelAtCameraM: number | null;
   worldTimeHours: number;
   camera: CameraDebugState;
   boat: BoatDebugState | null;
   firstPerson: FirstPersonDebugState | null;
+  fishing: FishingDebugState | null;
   originOffsetMeters: { x: number; z: number };
   status: "booting" | "running" | "error";
   error: string | null;
 };
+
+export type FishingRopeRenderMode = "tube" | "line";
 
 export type DebugSettings = {
   quality: QualityTier;
@@ -147,6 +160,7 @@ export type DebugSettings = {
   showFoam: boolean;
   showRain: boolean;
   showClouds: boolean;
+  boatWaterInteraction: boolean;
   /** Weather preset transition duration in seconds. */
   weatherTransitionSeconds: number;
   wireframe: boolean;
@@ -158,12 +172,24 @@ export type DebugSettings = {
   choppiness: number;
   foamIntensity: number;
   foamDecay: number;
+  boatWakeIntensity: number;
+  boatWakeFoamIntensity: number;
   waterTurbidity: number;
   cloudCoverageBias: number;
   cloudDensityBias: number;
   exposureBias: number;
-  boatUseModel: boolean;
   /** Master toggle for all boat lights (spotlights). Off by default. */
   boatLightsOn: boolean;
   firstPerson: boolean;
+  fishingRopeEnabled: boolean;
+  fishingRopeRadius: number;
+  fishingRopeRenderMode: FishingRopeRenderMode;
+  fishingRopeMinLengthM: number;
+  fishingRopeMaxLengthM: number;
+  fishingRopeInitialLengthM: number;
+  fishingReelSpeedMs: number;
+  /** Allowed boom pitch range in degrees (X axis, Y/H controls). */
+  fishingBoomMinDeg: number;
+  fishingBoomMaxDeg: number;
+  fishingBoomDefaultDeg: number;
 };

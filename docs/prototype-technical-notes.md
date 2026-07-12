@@ -11,6 +11,11 @@ This prototype is intentionally WebGPU-only. It should fail with a clear message
 - `C`: move down.
 - `Shift`: speed boost.
 - `Esc`: release pointer lock.
+- `I` / `K`: throttle forward / reverse; the cabin lever follows the smoothed input.
+- `J` / `L`: steer left / right; the cabin wheel follows the smoothed input.
+- `U` / `P`: pay out / reel in the bow fishing rope; the forward rope lever follows the smoothed input.
+- `Y` / `H`: raise / lower the bow fishing boom about the winch base; the boom lever follows the smoothed input.
+- `O`: toggle boat spotlights.
 
 ## Architecture
 
@@ -24,6 +29,7 @@ This prototype is intentionally WebGPU-only. It should fail with a clear message
 - **Volumetric clouds** (`src/atmosphere/clouds/`): AAA-style raymarched cloud layer (Schneider/Nubis density + Frostbite energy integration + Wrenninge multi-scatter approximation). World-tiled 512² weather map (RepeatWrapping) with smooth wind advection via sample offset — no camera snapping. Half-resolution render with temporal accumulation, followed by a full-resolution scene-depth composite so moving meshes and FFT-displaced waves occlude clouds without entering the temporal history. Includes cirrus, horizon stratus fill, projected cloud shadows on the ocean and storm lightning (procedural bolts + in-cloud flashes). Four weather presets with configurable 5–120 s eased transitions.
 - **Sea state**: master Beaufort control (0-12) mapped to wind speed / JONSWAP parameters (`src/state/seaState.ts`); weather presets suggest a default Beaufort. Advanced panel exposes fetch, choppiness, swell, foam and turbidity.
 - **Physics sampling** (`OceanPhysicsSampler.ts`): compute pass evaluates the exact displacement cascades on a 64x64 grid around the camera and reads it back asynchronously (1-2 frame latency, no stall). Public API: `getHeightAt(x, z)`, `getNormalAt(x, z)`, `isReady()`, with horizontal-displacement compensation. The HUD "Sea Level" metric is fed by it.
+- **Fishing rope** (`src/fishing/`): Verlet particle chain anchored at the bow pulley with a terminal weight, reel-controlled paid-out length (1-50 m, default 2 m), hull BVH collision, and ocean height sampling for submerged nodes (inherits the sampler's 1-2 frame latency). Visualized as a configurable thick tube or line mesh.
 
 ## Celestial elevation masks
 
@@ -45,7 +51,6 @@ This prototype is intentionally WebGPU-only. It should fail with a clear message
 ## Deliberately Deferred
 
 - WebGL2 fallback.
-- Boat, buoyancy and gameplay controls (the sampler API is ready for them).
 - Island or chunk generation.
 - Bruneton atmospheric LUTs.
 - TAA, SSR, bloom and auto exposure.
