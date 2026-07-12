@@ -16,9 +16,10 @@
     metrics: EngineMetrics;
     onChange: (settings: DebugSettings) => void;
     onResetBoat: () => void;
+    onRefuel: () => void;
   };
 
-  let { settings, metrics, onChange, onResetBoat }: Props = $props();
+  let { settings, metrics, onChange, onResetBoat, onRefuel }: Props = $props();
   let showAdvanced = $state(false);
 
   const weatherOptions: Array<{ value: WeatherPresetName; label: string }> = [
@@ -163,6 +164,19 @@
           { label: "Yaw", value: `${metrics.firstPerson.yawDeg.toFixed(0)} deg` },
           { label: "Pitch", value: `${metrics.firstPerson.pitchDeg.toFixed(0)} deg` },
           { label: "On Ground", value: metrics.firstPerson.onGround ? "yes" : "no" }
+        ]
+  );
+
+  const systemCards = $derived(
+    metrics.systems === null
+      ? [{ label: "Systems", value: "n/a" }]
+      : [
+          { label: "Mode", value: metrics.gameplayMode },
+          { label: "Engine", value: metrics.systems.engine },
+          { label: "RPM", value: metrics.systems.instruments.rpm.toFixed(0) },
+          { label: "Fuel", value: `${(metrics.systems.fuel * 100).toFixed(1)}%` },
+          { label: "Bilge", value: `${(metrics.systems.bilgeLevel * 100).toFixed(1)}%` },
+          { label: "Radio", value: metrics.systems.radio.powered ? `CH ${metrics.systems.radio.station}` : "off" }
         ]
   );
 
@@ -393,9 +407,9 @@
   <section class="mt-3 rounded border border-orange-300/25 bg-orange-950/20 p-2">
     <div class="mb-2 flex items-center justify-between gap-2">
       <h2 class="text-[11px] font-semibold uppercase tracking-normal text-orange-200">Boat</h2>
-      <div class="flex items-center gap-2">
+      <div class="flex flex-wrap items-center justify-end gap-2">
         <label class="!mb-0 flex min-h-6 items-center gap-1 rounded border border-orange-200/20 bg-orange-200/10 px-2 py-1">
-          <span class="!mb-0 !text-[10px] !text-orange-100">Luces (O)</span>
+          <span class="!mb-0 !text-[10px] !text-orange-100">Foco (debug)</span>
           <input type="checkbox" checked={settings.boatLightsOn} onchange={(event) => patch({ boatLightsOn: checked(event) })} />
         </label>
         <button
@@ -414,6 +428,13 @@
         >
           Reset
         </button>
+        <button
+          class="rounded border border-emerald-200/20 bg-emerald-200/10 px-2 py-1 text-[10px] uppercase text-emerald-100 hover:bg-emerald-200/20"
+          type="button"
+          onclick={onRefuel}
+        >
+          Repostar
+        </button>
       </div>
     </div>
     <section class="grid grid-cols-2 gap-2">
@@ -429,6 +450,14 @@
         <div class="rounded border border-white/10 bg-white/[0.045] p-2">
           <div class="text-[10px] uppercase text-slate-500">{metric.label}</div>
           <div class="mt-1 truncate font-mono text-[12px] text-slate-100">{metric.value}</div>
+        </div>
+      {/each}
+    </section>
+    <section class="mt-2 grid grid-cols-3 gap-2">
+      {#each systemCards as metric}
+        <div class="rounded border border-emerald-200/10 bg-emerald-950/15 p-2">
+          <div class="text-[10px] uppercase text-emerald-300/55">{metric.label}</div>
+          <div class="mt-1 truncate font-mono text-[11px] text-emerald-100">{metric.value}</div>
         </div>
       {/each}
     </section>
@@ -505,7 +534,7 @@
           />
         </label>
       </div>
-      <h3 class="mb-2 text-[10px] font-semibold uppercase tracking-normal text-cyan-300/80">Boom Elevation (Y/H)</h3>
+      <h3 class="mb-2 text-[10px] font-semibold uppercase tracking-normal text-cyan-300/80">Boom Elevation (W/S en puesto)</h3>
       <div class="mb-2 grid grid-cols-2 gap-2">
         <label>
           <span>Min Angle {settings.fishingBoomMinDeg.toFixed(0)}°</span>
@@ -569,7 +598,7 @@
   </section>
 
   <p class="mt-3 text-[11px] leading-snug text-slate-400">
-    Debug: ` muestra/oculta el menú. Click canvas for pointer lock. Free camera: WASD move, Space/C vertical, Shift boost, Esc releases. Boat: I/K throttle, J/L rudder, O luces. Fishing: U soltar soga, P recoger soga, Y subir brazo, H bajar brazo. Primera persona: WASD caminar, mouse mirar, Esc sale del modo.
+    Gameplay: WASD caminar. Mirá un puesto cercano y presioná F. Volante: W/S acelerador, A/D timón. Pesca: W/S brazo, A/D cuerda. Click y rueda operan la cabina. Esc libera el mouse; F abandona el puesto.
   </p>
 </aside>
 

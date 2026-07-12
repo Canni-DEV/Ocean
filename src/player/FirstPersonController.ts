@@ -1,5 +1,6 @@
 import * as THREE from "three/webgpu";
 import { MeshBVH } from "three-mesh-bvh";
+import type { InputActionSnapshot } from "../gameplay/types";
 
 const WALK_SPEED_MS = 2.2;
 const EYE_HEIGHT_M = 1.3;
@@ -34,8 +35,6 @@ export class FirstPersonController {
   readonly localPosition = new THREE.Vector3();
 
   private readonly camera: THREE.PerspectiveCamera;
-  private readonly canvas: HTMLCanvasElement;
-  private readonly keys: Record<string, boolean> = {};
   private readonly capsuleSegment = new THREE.Line3();
   private readonly tempVector = new THREE.Vector3();
   private readonly tempVector2 = new THREE.Vector3();
@@ -51,6 +50,7 @@ export class FirstPersonController {
   private readonly subStep = new THREE.Vector3();
   private readonly segmentStartBefore = new THREE.Vector3();
   private readonly correction = new THREE.Vector3();
+  private readonly safeWalkingPosition = new THREE.Vector3();
 
   private yaw = 0;
   private pitch = 0;
@@ -58,16 +58,11 @@ export class FirstPersonController {
   private onGround = false;
   private wasOnGround = false;
   private enabled = false;
-  private disposed = false;
+  private hasSafeWalkingPosition = false;
 
   constructor(camera: THREE.PerspectiveCamera, canvas: HTMLCanvasElement) {
     this.camera = camera;
-    this.canvas = canvas;
-
-    window.addEventListener("keydown", this.onKeyDown);
-    window.addEventListener("keyup", this.onKeyUp);
-    window.addEventListener("mousemove", this.onMouseMove);
-    this.canvas.addEventListener("click", this.onCanvasClick);
+    void canvas;
   }
 
   setEnabled(enabled: boolean): void {
@@ -99,19 +94,63 @@ export class FirstPersonController {
     } else {
       this.localPosition.copy(spawnHint);
     }
+    this.safeWalkingPosition.copy(this.localPosition);
+    this.hasSafeWalkingPosition = true;
   }
 
-  update(deltaSeconds: number, boatGroup: THREE.Group, bvh: MeshBVH): void {
+  /** Preserve a collider-validated walking pose before the camera moves to a station socket. */
+  enterStation(): void {
+    if (!this.hasSafeWalkingPosition) {
+      this.safeWalkingPosition.copy(this.localPosition);
+      this.hasSafeWalkingPosition = true;
+    }
+    this.verticalVelocity = 0;
+  }
+
+  /**
+   * Station sockets are camera poses, not valid capsule poses. Restore the last
+   * grounded walking pose before collision/gravity ownership resumes.
+   */
+  exitStation(bvh?: MeshBVH): void {
+    if (this.hasSafeWalkingPosition) this.localPosition.copy(this.safeWalkingPosition);
+    this.verticalVelocity = 0;
+    this.wasOnGround = true;
+    this.onGround = true;
+    if (bvh) this.resolvePenetration(bvh);
+  }
+
+  update(
+    deltaSeconds: number,
+    boatGroup: THREE.Group,
+    bvh: MeshBVH,
+    input?: InputActionSnapshot,
+    allowMovement = true,
+    stationPosition?: THREE.Vector3 | null
+  ): void {
     if (!this.enabled || deltaSeconds <= 0) return;
+
+    if (input?.pointerLocked) {
+      this.yaw -= input.lookDeltaX * MOUSE_SENSITIVITY;
+      this.pitch = THREE.MathUtils.clamp(this.pitch - input.lookDeltaY * MOUSE_SENSITIVITY, PITCH_MIN, PITCH_MAX);
+    }
+
+    if (stationPosition) {
+      const blend = 1 - Math.exp(-deltaSeconds * 14);
+      this.localPosition.lerp(stationPosition, blend);
+      this.verticalVelocity = 0;
+      this.onGround = true;
+      this.syncCamera(boatGroup);
+      return;
+    }
 
     const forward = this.tempVector.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     const right = this.tempVector2.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     this.displacement.set(0, 0, 0);
 
-    if (this.keys.KeyW) this.displacement.add(forward);
-    if (this.keys.KeyS) this.displacement.sub(forward);
-    if (this.keys.KeyA) this.displacement.sub(right);
-    if (this.keys.KeyD) this.displacement.add(right);
+    if (allowMovement && input) {
+      this.displacement.addScaledVector(forward, input.forward);
+      this.displacement.addScaledVector(right, input.right);
+    }
 
     if (this.displacement.lengthSq() > 0) {
       this.displacement.normalize().multiplyScalar(WALK_SPEED_MS * deltaSeconds);
@@ -123,6 +162,11 @@ export class FirstPersonController {
     this.wasOnGround = this.onGround;
     this.moveWithCollisions(bvh);
     this.applyGroundSnap(bvh);
+
+    if (allowMovement && this.onGround) {
+      this.safeWalkingPosition.copy(this.localPosition);
+      this.hasSafeWalkingPosition = true;
+    }
 
     this.syncCamera(boatGroup);
   }
@@ -139,12 +183,7 @@ export class FirstPersonController {
   }
 
   dispose(): void {
-    if (this.disposed) return;
-    this.disposed = true;
-    window.removeEventListener("keydown", this.onKeyDown);
-    window.removeEventListener("keyup", this.onKeyUp);
-    window.removeEventListener("mousemove", this.onMouseMove);
-    this.canvas.removeEventListener("click", this.onCanvasClick);
+    // Input ownership lives in GameplayInputRouter.
   }
 
   /**
@@ -283,26 +322,4 @@ export class FirstPersonController {
     this.camera.quaternion.copy(this.worldQuaternion);
   }
 
-  private readonly onKeyDown = (event: KeyboardEvent): void => {
-    if (!this.enabled) return;
-    this.keys[event.code] = true;
-  };
-
-  private readonly onKeyUp = (event: KeyboardEvent): void => {
-    if (!this.enabled) return;
-    this.keys[event.code] = false;
-  };
-
-  private readonly onCanvasClick = (): void => {
-    if (!this.enabled) return;
-    void this.canvas.requestPointerLock();
-  };
-
-  private readonly onMouseMove = (event: MouseEvent): void => {
-    if (!this.enabled || document.pointerLockElement !== this.canvas) return;
-
-    this.yaw -= event.movementX * MOUSE_SENSITIVITY;
-    this.pitch -= event.movementY * MOUSE_SENSITIVITY;
-    this.pitch = THREE.MathUtils.clamp(this.pitch, PITCH_MIN, PITCH_MAX);
-  };
 }

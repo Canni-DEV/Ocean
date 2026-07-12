@@ -5,18 +5,22 @@
   import type { DebugSettings } from "./engine/types";
   import { debugSettings, engineMetrics } from "./state/debugStore";
   import DebugPanel from "./ui/DebugPanel.svelte";
+  import GameplayHUD from "./ui/GameplayHUD.svelte";
+  import { DEFAULT_GAMEPLAY_UI, type GameplayUiState } from "./gameplay/types";
 
   let canvas: HTMLCanvasElement;
   let debugPanel: HTMLDivElement;
   let debugPanelToggle: HTMLButtonElement;
   let engine: EngineApp | null = null;
-  let debugPanelVisible = true;
+  let debugPanelVisible = $state(false);
+  let gameplayUi = $state<GameplayUiState>({ ...DEFAULT_GAMEPLAY_UI });
 
   onMount(() => {
     engine = new EngineApp({
       canvas,
       initialSettings: get(debugSettings),
-      onMetrics: (metrics) => engineMetrics.set(metrics)
+      onMetrics: (metrics) => engineMetrics.set(metrics),
+      onGameplayUi: (state) => (gameplayUi = state)
     });
 
     const unsubscribe = debugSettings.subscribe((settings) => {
@@ -44,9 +48,6 @@
       return;
     }
 
-    if (event.code === "KeyO") {
-      debugSettings.update((settings) => ({ ...settings, boatLightsOn: !settings.boatLightsOn }));
-    }
   }
 
   function toggleDebugPanel() {
@@ -69,10 +70,15 @@
   function resetBoat() {
     engine?.resetBoat();
   }
+
+  function refuelBoat() {
+    engine?.refuelBoat();
+  }
 </script>
 
 <main class="relative h-full w-full overflow-hidden bg-black">
   <canvas bind:this={canvas} class="absolute inset-0 h-full w-full"></canvas>
+  <GameplayHUD state={gameplayUi} hidden={debugPanelVisible} />
 
   <div class="pointer-events-none absolute left-3 top-3 z-10 flex flex-col items-start gap-2">
     <button
@@ -97,7 +103,7 @@
       aria-hidden={!debugPanelVisible}
       inert={!debugPanelVisible}
     >
-      <DebugPanel settings={$debugSettings} metrics={$engineMetrics} onChange={updateSettings} onResetBoat={resetBoat} />
+      <DebugPanel settings={$debugSettings} metrics={$engineMetrics} onChange={updateSettings} onResetBoat={resetBoat} onRefuel={refuelBoat} />
     </div>
   </div>
 </main>

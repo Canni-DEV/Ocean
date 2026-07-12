@@ -5,17 +5,20 @@ This prototype is intentionally WebGPU-only. It should fail with a clear message
 ## Controls
 
 - `` ` `` (`Backquote`): show or hide the debug menu.
-- Click the canvas to enter pointer lock.
-- `WASD`: horizontal movement.
-- `Space`: move up.
-- `C`: move down.
-- `Shift`: speed boost.
-- `Esc`: release pointer lock.
-- `I` / `K`: throttle forward / reverse; the cabin lever follows the smoothed input.
-- `J` / `L`: steer left / right; the cabin wheel follows the smoothed input.
-- `U` / `P`: pay out / reel in the bow fishing rope; the forward rope lever follows the smoothed input.
-- `Y` / `H`: raise / lower the bow fishing boom about the winch base; the boom lever follows the smoothed input.
-- `O`: toggle boat spotlights.
+- Click the canvas to enter pointer lock; `Esc` releases it without leaving an occupied station.
+- Walking: `WASD` moves the player around the boat and the mouse controls the view.
+- Look at the nearby helm or fishing controls and press `F` to occupy that station; press `F` again to leave it.
+- Helm: `W/S` adjusts persistent throttle and `A/D` operates the self-centering rudder.
+- Fishing: `W/S` raises/lowers the boom and `A/D` pays out/reels in the rope.
+- Cabin controls use the center reticle: left click toggles switches, holding click sounds the horn, and the mouse wheel adjusts radio volume/tuning.
+- The old `IJKL`, `YHUP`, and `O` gameplay shortcuts have been removed.
+
+## Gameplay systems
+
+- `GameplayInputRouter` is the sole owner of keyboard, mouse and pointer-lock events. It routes one frame snapshot to walking, helm, fishing or debug-free-camera mode.
+- The runtime cockpit rig adds non-colliding hit proxies, animated switches, six live instruments, navigation/anchor/cabin lights, wiper, wet glass and visible bilge water without modifying the source GLB.
+- Motor state gates propulsion and consumes a four-hour normalized fuel tank. Electrical accessories remain independent.
+- Radio has five lazy-loaded slots at `/audio/radio/station-01.ogg` through `station-05.ogg`; missing files fall back to procedural station tones and static.
 
 ## Architecture
 

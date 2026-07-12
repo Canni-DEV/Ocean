@@ -1,3 +1,5 @@
+import type { BoatSystemsState, GameplayMode } from "../gameplay/types";
+
 export type QualityTier = "low" | "medium" | "high";
 
 export type WeatherPresetName = "clear" | "cloudy" | "rain" | "storm";
@@ -138,6 +140,8 @@ export type EngineMetrics = {
   boat: BoatDebugState | null;
   firstPerson: FirstPersonDebugState | null;
   fishing: FishingDebugState | null;
+  systems: BoatSystemsState | null;
+  gameplayMode: GameplayMode;
   originOffsetMeters: { x: number; z: number };
   status: "booting" | "running" | "error";
   error: string | null;

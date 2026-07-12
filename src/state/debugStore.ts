@@ -33,7 +33,7 @@ export const DEFAULT_DEBUG_SETTINGS: DebugSettings = {
   cloudDensityBias: 0,
   exposureBias: 0,
   boatLightsOn: false,
-  firstPerson: false,
+  firstPerson: true,
   fishingRopeEnabled: true,
   fishingRopeRadius: 0.008,
   fishingRopeRenderMode: "tube",
@@ -62,6 +62,8 @@ export const DEFAULT_ENGINE_METRICS: EngineMetrics = {
   boat: null,
   firstPerson: null,
   fishing: null,
+  systems: null,
+  gameplayMode: "walking",
   originOffsetMeters: { x: 0, z: 0 },
   status: "booting",
   error: null

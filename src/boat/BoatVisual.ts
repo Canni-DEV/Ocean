@@ -8,6 +8,8 @@ import { FishingControlRig } from "../fishing/FishingControlRig";
 import { getBoomElevationDefaultRad } from "../fishing/boomElevationLimits";
 import type { FishingControlState } from "../fishing/FishingController";
 import { DEFAULT_BOAT_CONFIG, type BoatConfig, type BoatPhysics } from "./BoatPhysics";
+import { CockpitRig } from "./CockpitRig";
+import type { BoatSystemsState } from "../gameplay/types";
 
 /**
  * Meshes del modelo GLB que se ocultan y se excluyen del collider para dejar
@@ -46,6 +48,7 @@ export class BoatVisual {
   private colliderBVH: MeshBVH | null = null;
   private controlRig: BoatControlRig | null = null;
   private fishingControlRig: FishingControlRig | null = null;
+  private cockpitRig: CockpitRig | null = null;
   private controlThrottle = 0;
   private controlRudder = 0;
   private fishingReel = 0;
@@ -74,6 +77,12 @@ export class BoatVisual {
     this.syncVisibility();
   }
 
+  setSystemsState(state: BoatSystemsState, precipitation: number, deltaSeconds: number): void {
+    this.lightsOn = state.workLight;
+    this.cockpitRig?.update(state, precipitation, deltaSeconds);
+    this.syncVisibility();
+  }
+
   setControlState(control: BoatControlState): void {
     this.controlThrottle = control.throttle;
     this.controlRudder = control.rudder;
@@ -93,6 +102,10 @@ export class BoatVisual {
 
   getFishingRig(): FishingControlRig | null {
     return this.fishingControlRig;
+  }
+
+  getCockpitRig(): CockpitRig | null {
+    return this.cockpitRig;
   }
 
   isColliderReady(): boolean {
@@ -123,6 +136,7 @@ export class BoatVisual {
     this.colliderBVH = null;
     this.controlRig = null;
     this.fishingControlRig = null;
+    this.cockpitRig = null;
     this.colliderGeometry?.dispose();
     this.colliderGeometry = null;
     this.group.removeFromParent();
@@ -141,6 +155,7 @@ export class BoatVisual {
       });
       this.fishingControlRig = FishingControlRig.bind(model);
       this.fishingControlRig?.update(this.fishingReel, this.fishingBoom, this.fishingBoomElevationRad);
+      this.cockpitRig = CockpitRig.bind(model);
       this.modelGroup.add(model);
       this.modelReady = true;
       this.buildCollider();
