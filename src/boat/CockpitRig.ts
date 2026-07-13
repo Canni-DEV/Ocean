@@ -65,6 +65,23 @@ export const COCKPIT_ACCESSORY_BANK_LAYOUT = {
   pressDurationS: 0.13
 } as const;
 
+/** Calibrated against the two original knobs embedded in Cube.017 (radio). */
+export const COCKPIT_RADIO_KNOB_LAYOUT = {
+  ids: ["radioPowerVolume", "radioTuning"] as const,
+  positions: [
+    [-0.1395, 1.9125, -0.27],
+    [0.1395, 1.9125, -0.27]
+  ] as const,
+  surfaceNormal: [0, 0, 1] as const,
+  surfaceOffset: 0.006,
+  hitboxSize: [0.072, 0.072, 0.04] as const,
+  indicatorRadius: 0.011,
+  hoverInnerRadius: 0.026,
+  hoverOuterRadius: 0.031,
+  pressDepth: 0.004,
+  pressDurationS: 0.12
+} as const;
+
 const ACCESSORY_SWITCH_IDS = new Set<CockpitControlId>(COCKPIT_ACCESSORY_BANK_LAYOUT.ids);
 const ACCESSORY_SURFACE_NORMAL = new THREE.Vector3(
   ...COCKPIT_ACCESSORY_BANK_LAYOUT.surfaceNormal
@@ -73,12 +90,26 @@ const ACCESSORY_SURFACE_QUATERNION = new THREE.Quaternion().setFromUnitVectors(
   new THREE.Vector3(0, 0, 1),
   ACCESSORY_SURFACE_NORMAL
 );
+const RADIO_KNOB_IDS = new Set<CockpitControlId>(COCKPIT_RADIO_KNOB_LAYOUT.ids);
+const RADIO_SURFACE_NORMAL = new THREE.Vector3(...COCKPIT_RADIO_KNOB_LAYOUT.surfaceNormal);
+const RADIO_SURFACE_QUATERNION = new THREE.Quaternion().setFromUnitVectors(
+  new THREE.Vector3(0, 0, 1),
+  RADIO_SURFACE_NORMAL
+);
 
 function accessorySwitchPosition(id: CockpitControlId): [number, number, number] {
   const index = COCKPIT_ACCESSORY_BANK_LAYOUT.ids.indexOf(
     id as (typeof COCKPIT_ACCESSORY_BANK_LAYOUT.ids)[number]
   );
   const position = COCKPIT_ACCESSORY_BANK_LAYOUT.buttonPositions[Math.max(0, index)];
+  return [position[0], position[1], position[2]];
+}
+
+function radioKnobPosition(id: CockpitControlId): [number, number, number] {
+  const index = COCKPIT_RADIO_KNOB_LAYOUT.ids.indexOf(
+    id as (typeof COCKPIT_RADIO_KNOB_LAYOUT.ids)[number]
+  );
+  const position = COCKPIT_RADIO_KNOB_LAYOUT.positions[Math.max(0, index)];
   return [position[0], position[1], position[2]];
 }
 
@@ -112,8 +143,8 @@ const CONTROL_DEFINITIONS: ControlDefinition[] = [
   { id: "instrumentLights", label: "Iluminación de instrumentos", clickLabel: "Alternar", position: accessorySwitchPosition("instrumentLights") },
   { id: "wipers", label: "Limpiaparabrisas", clickLabel: "Alternar", position: accessorySwitchPosition("wipers") },
   { id: "bilgePump", label: "Bomba de achique", clickLabel: "Alternar", position: accessorySwitchPosition("bilgePump") },
-  { id: "radioPowerVolume", label: "Radio / volumen", clickLabel: "Click: encender", wheelLabel: "Rueda: volumen", position: [-0.28, 1.9, -0.23] },
-  { id: "radioTuning", label: "Sintonía", clickLabel: "", wheelLabel: "Rueda: emisora", position: [0.28, 1.9, -0.23] },
+  { id: "radioPowerVolume", label: "Radio / volumen", clickLabel: "Click: encender", wheelLabel: "Rueda: volumen", position: radioKnobPosition("radioPowerVolume") },
+  { id: "radioTuning", label: "Sintonía", clickLabel: "", wheelLabel: "Rueda: emisora", position: radioKnobPosition("radioTuning") },
   { id: "radioPreset1", label: "Memoria 1", clickLabel: "Seleccionar", position: [-0.12, 1.82, -0.18] },
   { id: "radioPreset2", label: "Memoria 2", clickLabel: "Seleccionar", position: [-0.06, 1.82, -0.18] },
   { id: "radioPreset3", label: "Memoria 3", clickLabel: "Seleccionar", position: [0, 1.82, -0.18] },
@@ -206,8 +237,12 @@ export class CockpitRig {
 
   triggerControlPress(id: CockpitControlId): void {
     const control = this.controls.get(id);
-    if (!control || !ACCESSORY_SWITCH_IDS.has(id)) return;
-    control.pressRemainingS = COCKPIT_ACCESSORY_BANK_LAYOUT.pressDurationS;
+    if (!control) return;
+    if (ACCESSORY_SWITCH_IDS.has(id)) {
+      control.pressRemainingS = COCKPIT_ACCESSORY_BANK_LAYOUT.pressDurationS;
+    } else if (RADIO_KNOB_IDS.has(id)) {
+      control.pressRemainingS = COCKPIT_RADIO_KNOB_LAYOUT.pressDurationS;
+    }
   }
 
   update(state: BoatSystemsState, precipitation: number, deltaSeconds: number): void {
@@ -223,6 +258,7 @@ export class CockpitRig {
         case "wipers": return state.wipers;
         case "bilgePump": return state.bilgePump;
         case "radioPowerVolume": return state.radio.powered;
+        case "radioTuning": return state.radio.powered;
         case "radioPreset1": return state.radio.station === 1;
         case "radioPreset2": return state.radio.station === 2;
         case "radioPreset3": return state.radio.station === 3;
@@ -238,25 +274,34 @@ export class CockpitRig {
       }
       const material = control.indicator?.material as THREE.MeshStandardMaterial | undefined;
       if (material) {
-        const isAccessorySwitch = ACCESSORY_SWITCH_IDS.has(id);
-        material.emissive.set(on ? (isAccessorySwitch ? 0x36d982 : 0x58ff9a) : 0x06120a);
-        material.emissiveIntensity = on ? (isAccessorySwitch ? 2.2 : 4) : 0.15;
+        const usesIntegratedIndicator = ACCESSORY_SWITCH_IDS.has(id) || RADIO_KNOB_IDS.has(id);
+        material.emissive.set(on ? (usesIntegratedIndicator ? 0x36d982 : 0x58ff9a) : 0x06120a);
+        material.emissiveIntensity = on ? (usesIntegratedIndicator ? 2.2 : 4) : 0.15;
       }
       const hoverMaterial = control.hoverRing?.material as THREE.MeshBasicMaterial | undefined;
       if (hoverMaterial) {
         const targetOpacity = this.highlightedControl === id ? 0.56 : 0;
         hoverMaterial.opacity += (targetOpacity - hoverMaterial.opacity) * (1 - Math.exp(-deltaSeconds * 18));
       }
-      if (ACCESSORY_SWITCH_IDS.has(id)) {
+      const isAccessorySwitch = ACCESSORY_SWITCH_IDS.has(id);
+      const isRadioKnob = RADIO_KNOB_IDS.has(id);
+      if (isAccessorySwitch || isRadioKnob) {
+        const durationS = isAccessorySwitch
+          ? COCKPIT_ACCESSORY_BANK_LAYOUT.pressDurationS
+          : COCKPIT_RADIO_KNOB_LAYOUT.pressDurationS;
+        const depth = isAccessorySwitch
+          ? COCKPIT_ACCESSORY_BANK_LAYOUT.pressDepth
+          : COCKPIT_RADIO_KNOB_LAYOUT.pressDepth;
+        const axis = isAccessorySwitch ? ACCESSORY_SURFACE_NORMAL : RADIO_SURFACE_NORMAL;
         control.pressRemainingS = Math.max(0, control.pressRemainingS - deltaSeconds);
-        const elapsed = COCKPIT_ACCESSORY_BANK_LAYOUT.pressDurationS - control.pressRemainingS;
-        const progress = THREE.MathUtils.clamp(elapsed / COCKPIT_ACCESSORY_BANK_LAYOUT.pressDurationS, 0, 1);
+        const elapsed = durationS - control.pressRemainingS;
+        const progress = THREE.MathUtils.clamp(elapsed / durationS, 0, 1);
         const travel = control.pressRemainingS > 0
-          ? Math.sin(progress * Math.PI) * COCKPIT_ACCESSORY_BANK_LAYOUT.pressDepth
+          ? Math.sin(progress * Math.PI) * depth
           : 0;
         control.visual.position
           .copy(control.restPosition)
-          .addScaledVector(ACCESSORY_SURFACE_NORMAL, -travel);
+          .addScaledVector(axis, -travel);
       }
     }
 
@@ -301,30 +346,38 @@ export class CockpitRig {
       const isPreset = definition.id.startsWith("radioPreset");
       const isLowerSwitch = LOWER_SWITCH_IDS.has(definition.id);
       const isAccessorySwitch = ACCESSORY_SWITCH_IDS.has(definition.id);
+      const isIntegratedControl = isAccessorySwitch || isRadioKnob;
       let visual: THREE.Object3D;
       if (isLowerSwitch) {
         visual = this.createPanelLabel(
           definition.panelLabel ?? definition.label,
           definition.position[1]
         );
-      } else if (isAccessorySwitch) {
+      } else if (isIntegratedControl) {
+        const surfaceNormal = isAccessorySwitch ? ACCESSORY_SURFACE_NORMAL : RADIO_SURFACE_NORMAL;
+        const surfaceOffset = isAccessorySwitch
+          ? COCKPIT_ACCESSORY_BANK_LAYOUT.surfaceOffset
+          : COCKPIT_RADIO_KNOB_LAYOUT.surfaceOffset;
         visual = new THREE.Group();
         visual.position
           .set(...definition.position)
-          .addScaledVector(ACCESSORY_SURFACE_NORMAL, COCKPIT_ACCESSORY_BANK_LAYOUT.surfaceOffset);
-        visual.quaternion.copy(ACCESSORY_SURFACE_QUATERNION);
+          .addScaledVector(surfaceNormal, surfaceOffset);
+        visual.quaternion.copy(
+          isAccessorySwitch ? ACCESSORY_SURFACE_QUATERNION : RADIO_SURFACE_QUATERNION
+        );
       } else {
-        const geometry = isRadioKnob
-          ? new THREE.CylinderGeometry(0.055, 0.055, 0.04, 18)
-          : new THREE.BoxGeometry(isPreset ? 0.045 : 0.085, isPreset ? 0.025 : 0.045, 0.045);
+        const geometry = new THREE.BoxGeometry(
+          isPreset ? 0.045 : 0.085,
+          isPreset ? 0.025 : 0.045,
+          0.045
+        );
         const visualMaterial = new THREE.MeshStandardMaterial({
-          color: isRadioKnob ? 0x1d2938 : 0xd8dfdf,
-          metalness: isRadioKnob ? 0.7 : 0.18,
+          color: 0xd8dfdf,
+          metalness: 0.18,
           roughness: 0.35
         });
         const mesh = new THREE.Mesh(geometry, visualMaterial);
         mesh.position.set(...definition.position);
-        if (isRadioKnob) mesh.rotation.x = Math.PI / 2;
         visual = mesh;
       }
       visual.name = `Cabin control ${definition.id}`;
@@ -335,10 +388,16 @@ export class CockpitRig {
         ? new THREE.BoxGeometry(...COCKPIT_SWITCH_BANK_LAYOUT.hitboxSize)
         : isAccessorySwitch
           ? new THREE.BoxGeometry(...COCKPIT_ACCESSORY_BANK_LAYOUT.hitboxSize)
-        : new THREE.BoxGeometry(isPreset ? 0.06 : 0.11, isPreset ? 0.06 : 0.09, 0.1);
+          : isRadioKnob
+            ? new THREE.BoxGeometry(...COCKPIT_RADIO_KNOB_LAYOUT.hitboxSize)
+            : new THREE.BoxGeometry(isPreset ? 0.06 : 0.11, isPreset ? 0.06 : 0.09, 0.1);
       const hitbox = new THREE.Mesh(hitboxGeometry, hitMaterial);
       hitbox.position.set(...definition.position);
-      if (isAccessorySwitch) hitbox.quaternion.copy(ACCESSORY_SURFACE_QUATERNION);
+      if (isIntegratedControl) {
+        hitbox.quaternion.copy(
+          isAccessorySwitch ? ACCESSORY_SURFACE_QUATERNION : RADIO_SURFACE_QUATERNION
+        );
+      }
       hitbox.userData.cockpitHit = { kind: "control", target: definition } satisfies CockpitHit;
       hitbox.userData.excludeFromCollider = true;
       this.model.add(hitbox);
@@ -346,9 +405,15 @@ export class CockpitRig {
 
       let indicator: THREE.Mesh | undefined;
       let hoverRing: THREE.Mesh | undefined;
-      if (!isRadioKnob && !isPreset) {
-        const indicatorGeometry = isAccessorySwitch
-          ? new THREE.SphereGeometry(COCKPIT_ACCESSORY_BANK_LAYOUT.indicatorRadius, 20, 12)
+      if (!isPreset) {
+        const indicatorGeometry = isIntegratedControl
+          ? new THREE.SphereGeometry(
+              isAccessorySwitch
+                ? COCKPIT_ACCESSORY_BANK_LAYOUT.indicatorRadius
+                : COCKPIT_RADIO_KNOB_LAYOUT.indicatorRadius,
+              20,
+              12
+            )
           : isLowerSwitch
           ? new THREE.CircleGeometry(COCKPIT_SWITCH_BANK_LAYOUT.indicatorRadius, 18)
           : new THREE.SphereGeometry(0.012, 10, 8);
@@ -356,12 +421,18 @@ export class CockpitRig {
           indicatorGeometry,
           new THREE.MeshStandardMaterial({ color: 0x111713, emissive: 0x06120a, roughness: 0.5 })
         );
-        if (isAccessorySwitch) {
+        if (isIntegratedControl) {
           visual.add(indicator);
+          const hoverInnerRadius = isAccessorySwitch
+            ? COCKPIT_ACCESSORY_BANK_LAYOUT.hoverInnerRadius
+            : COCKPIT_RADIO_KNOB_LAYOUT.hoverInnerRadius;
+          const hoverOuterRadius = isAccessorySwitch
+            ? COCKPIT_ACCESSORY_BANK_LAYOUT.hoverOuterRadius
+            : COCKPIT_RADIO_KNOB_LAYOUT.hoverOuterRadius;
           hoverRing = new THREE.Mesh(
             new THREE.TorusGeometry(
-              (COCKPIT_ACCESSORY_BANK_LAYOUT.hoverInnerRadius + COCKPIT_ACCESSORY_BANK_LAYOUT.hoverOuterRadius) / 2,
-              (COCKPIT_ACCESSORY_BANK_LAYOUT.hoverOuterRadius - COCKPIT_ACCESSORY_BANK_LAYOUT.hoverInnerRadius) / 2,
+              (hoverInnerRadius + hoverOuterRadius) / 2,
+              (hoverOuterRadius - hoverInnerRadius) / 2,
               8,
               28
             ),
@@ -386,14 +457,14 @@ export class CockpitRig {
           indicator.position.copy(visual.position).add(new THREE.Vector3(0.065, 0, 0.025));
         }
         indicator.userData.excludeFromCollider = true;
-        if (!isAccessorySwitch) this.model.add(indicator);
+        if (!isIntegratedControl) this.model.add(indicator);
       }
       this.controls.set(definition.id, {
         hitbox,
         visual,
         indicator,
         hoverRing,
-        animateToggle: !isLowerSwitch && !isAccessorySwitch,
+        animateToggle: !isLowerSwitch && !isIntegratedControl,
         pressRemainingS: 0,
         restPosition: visual.position.clone()
       });

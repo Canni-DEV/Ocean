@@ -4,6 +4,7 @@ import { MeshBVH } from "three-mesh-bvh";
 import { BoatSystems } from "../boat/BoatSystems";
 import {
   COCKPIT_ACCESSORY_BANK_LAYOUT,
+  COCKPIT_RADIO_KNOB_LAYOUT,
   COCKPIT_SWITCH_BANK_LAYOUT,
   type CockpitRig
 } from "../boat/CockpitRig";
@@ -58,6 +59,21 @@ describe("InteractionSystem", () => {
     expect(Math.hypot(...layout.surfaceNormal)).toBeCloseTo(1, 5);
     expect(layout.surfaceNormal[1]).toBeGreaterThan(0.9);
     expect(layout.surfaceNormal[2]).toBeGreaterThan(0);
+    expect(layout.indicatorRadius).toBeLessThan(layout.hoverInnerRadius);
+    expect(layout.hoverInnerRadius).toBeLessThan(layout.hoverOuterRadius);
+  });
+
+  it("maps both radio controls to the original coplanar GLB knobs", () => {
+    const layout = COCKPIT_RADIO_KNOB_LAYOUT;
+    expect(layout.ids).toEqual(["radioPowerVolume", "radioTuning"]);
+    expect(layout.positions).toHaveLength(layout.ids.length);
+    const [left, right] = layout.positions;
+    expect(left[0]).toBeLessThan(right[0]);
+    expect(left[1]).toBeCloseTo(right[1], 5);
+    expect(left[2]).toBeCloseTo(right[2], 5);
+    expect(layout.hitboxSize[0]).toBeLessThan(right[0] - left[0]);
+    expect(layout.surfaceNormal).toEqual([0, 0, 1]);
+    expect(Math.hypot(...layout.surfaceNormal)).toBeCloseTo(1, 5);
     expect(layout.indicatorRadius).toBeLessThan(layout.hoverInnerRadius);
     expect(layout.hoverInnerRadius).toBeLessThan(layout.hoverOuterRadius);
   });
