@@ -14,13 +14,53 @@ type ControlVisual = {
   hitbox: THREE.Mesh;
   visual: THREE.Object3D;
   indicator?: THREE.Mesh;
+  animateToggle: boolean;
 };
 
-const CONTROL_DEFINITIONS: Array<InteractionTarget & { position: [number, number, number] }> = [
-  { id: "engine", label: "Motor", clickLabel: "Encender / apagar", position: [-0.48, 1.63, 0.18] },
-  { id: "cabinLight", label: "Luz de cabina", clickLabel: "Encender / apagar", position: [-0.48, 1.55, 0.18] },
-  { id: "workLight", label: "Foco de trabajo", clickLabel: "Encender / apagar", position: [-0.48, 1.47, 0.18] },
-  { id: "horn", label: "Bocina", clickLabel: "Mantener pulsado", position: [-0.48, 1.39, 0.18] },
+/**
+ * Calibrated against the original lower-left switch plate in fishing_boat.glb.
+ * Keep the bank dimensions together so future asset revisions require changing
+ * one measured layout instead of sixteen unrelated magic numbers.
+ */
+export const COCKPIT_SWITCH_BANK_LAYOUT = {
+  switchX: -0.355,
+  labelX: -0.292,
+  labelSize: [0.09, 0.026] as const,
+  labelYOffset: 0.005,
+  surfaceZ: 0.120,
+  rowY: [1.58028, 1.54186, 1.50388, 1.46788] as const,
+  // Matches the visible brass push-button, not the complete switch row.
+  hitboxSize: [0.026, 0.027, 0.04] as const,
+  indicatorX: -0.23059,
+  indicatorZ: 0.1245,
+  indicatorRadius: 0.0085
+} as const;
+
+const LOWER_SWITCH_IDS = new Set<CockpitControlId>([
+  "engine",
+  "cabinLight",
+  "workLight",
+  "horn"
+]);
+
+function lowerSwitchPosition(row: number): [number, number, number] {
+  return [
+    COCKPIT_SWITCH_BANK_LAYOUT.switchX,
+    COCKPIT_SWITCH_BANK_LAYOUT.rowY[row] ?? COCKPIT_SWITCH_BANK_LAYOUT.rowY[0],
+    COCKPIT_SWITCH_BANK_LAYOUT.surfaceZ
+  ];
+}
+
+type ControlDefinition = InteractionTarget & {
+  position: [number, number, number];
+  panelLabel?: string;
+};
+
+const CONTROL_DEFINITIONS: ControlDefinition[] = [
+  { id: "engine", label: "Motor", panelLabel: "ENGINE", clickLabel: "Encender / apagar", position: lowerSwitchPosition(0) },
+  { id: "cabinLight", label: "Luz de cabina", panelLabel: "CABIN", clickLabel: "Encender / apagar", position: lowerSwitchPosition(1) },
+  { id: "workLight", label: "Foco de proa", panelLabel: "PROA", clickLabel: "Encender / apagar", position: lowerSwitchPosition(2) },
+  { id: "horn", label: "Bocina", panelLabel: "HORN", clickLabel: "Mantener pulsado", position: lowerSwitchPosition(3) },
   { id: "navigationLights", label: "Luces de navegación", clickLabel: "Alternar", position: [-0.33, 1.7, -0.02] },
   { id: "anchorLight", label: "Luz de fondeo", clickLabel: "Alternar", position: [-0.18, 1.7, -0.02] },
   { id: "instrumentLights", label: "Iluminación de instrumentos", clickLabel: "Alternar", position: [-0.03, 1.7, -0.02] },
@@ -116,7 +156,9 @@ export class CockpitRig {
     };
     for (const [id, control] of this.controls) {
       const on = active(id);
-      control.visual.rotation.x += ((on ? -0.28 : 0) - control.visual.rotation.x) * (1 - Math.exp(-deltaSeconds * 14));
+      if (control.animateToggle) {
+        control.visual.rotation.x += ((on ? -0.28 : 0) - control.visual.rotation.x) * (1 - Math.exp(-deltaSeconds * 14));
+      }
       const material = control.indicator?.material as THREE.MeshStandardMaterial | undefined;
       if (material) {
         material.emissive.set(on ? 0x58ff9a : 0x06120a);
@@ -157,22 +199,35 @@ export class CockpitRig {
     for (const definition of CONTROL_DEFINITIONS) {
       const isRadioKnob = definition.id === "radioPowerVolume" || definition.id === "radioTuning";
       const isPreset = definition.id.startsWith("radioPreset");
-      const geometry = isRadioKnob
-        ? new THREE.CylinderGeometry(0.055, 0.055, 0.04, 18)
-        : new THREE.BoxGeometry(isPreset ? 0.045 : 0.085, isPreset ? 0.025 : 0.045, 0.045);
-      const visualMaterial = new THREE.MeshStandardMaterial({
-        color: isRadioKnob ? 0x1d2938 : 0xd8dfdf,
-        metalness: isRadioKnob ? 0.7 : 0.18,
-        roughness: 0.35
-      });
-      const visual = new THREE.Mesh(geometry, visualMaterial);
-      visual.position.set(...definition.position);
-      if (isRadioKnob) visual.rotation.x = Math.PI / 2;
+      const isLowerSwitch = LOWER_SWITCH_IDS.has(definition.id);
+      let visual: THREE.Object3D;
+      if (isLowerSwitch) {
+        visual = this.createPanelLabel(
+          definition.panelLabel ?? definition.label,
+          definition.position[1]
+        );
+      } else {
+        const geometry = isRadioKnob
+          ? new THREE.CylinderGeometry(0.055, 0.055, 0.04, 18)
+          : new THREE.BoxGeometry(isPreset ? 0.045 : 0.085, isPreset ? 0.025 : 0.045, 0.045);
+        const visualMaterial = new THREE.MeshStandardMaterial({
+          color: isRadioKnob ? 0x1d2938 : 0xd8dfdf,
+          metalness: isRadioKnob ? 0.7 : 0.18,
+          roughness: 0.35
+        });
+        const mesh = new THREE.Mesh(geometry, visualMaterial);
+        mesh.position.set(...definition.position);
+        if (isRadioKnob) mesh.rotation.x = Math.PI / 2;
+        visual = mesh;
+      }
       visual.name = `Cabin control ${definition.id}`;
       visual.userData.excludeFromCollider = true;
       this.model.add(visual);
 
-      const hitbox = new THREE.Mesh(new THREE.BoxGeometry(isPreset ? 0.06 : 0.11, isPreset ? 0.06 : 0.09, 0.1), hitMaterial);
+      const hitboxGeometry = isLowerSwitch
+        ? new THREE.BoxGeometry(...COCKPIT_SWITCH_BANK_LAYOUT.hitboxSize)
+        : new THREE.BoxGeometry(isPreset ? 0.06 : 0.11, isPreset ? 0.06 : 0.09, 0.1);
+      const hitbox = new THREE.Mesh(hitboxGeometry, hitMaterial);
       hitbox.position.set(...definition.position);
       hitbox.userData.cockpitHit = { kind: "control", target: definition } satisfies CockpitHit;
       hitbox.userData.excludeFromCollider = true;
@@ -181,20 +236,74 @@ export class CockpitRig {
 
       let indicator: THREE.Mesh | undefined;
       if (!isRadioKnob && !isPreset) {
+        const indicatorGeometry = isLowerSwitch
+          ? new THREE.CircleGeometry(COCKPIT_SWITCH_BANK_LAYOUT.indicatorRadius, 18)
+          : new THREE.SphereGeometry(0.012, 10, 8);
         indicator = new THREE.Mesh(
-          new THREE.SphereGeometry(0.012, 10, 8),
-          new THREE.MeshStandardMaterial({ color: 0x152219, emissive: 0x06120a })
+          indicatorGeometry,
+          new THREE.MeshStandardMaterial({ color: 0x111713, emissive: 0x06120a, roughness: 0.5 })
         );
-        indicator.position.copy(visual.position).add(new THREE.Vector3(0.065, 0, 0.025));
+        if (isLowerSwitch) {
+          indicator.position.set(
+            COCKPIT_SWITCH_BANK_LAYOUT.indicatorX,
+            definition.position[1],
+            COCKPIT_SWITCH_BANK_LAYOUT.indicatorZ
+          );
+        } else {
+          indicator.position.copy(visual.position).add(new THREE.Vector3(0.065, 0, 0.025));
+        }
         indicator.userData.excludeFromCollider = true;
         this.model.add(indicator);
       }
-      this.controls.set(definition.id, { hitbox, visual, indicator });
+      this.controls.set(definition.id, { hitbox, visual, indicator, animateToggle: !isLowerSwitch });
     }
   }
 
+  private createPanelLabel(text: string, y: number): THREE.Mesh {
+    const canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 128;
+    const context = canvas.getContext("2d");
+    if (context) {
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = "#171611";
+      context.font = "900 76px 'Arial Narrow', Arial, sans-serif";
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.fillText(text, canvas.width / 2, canvas.height / 2 - 5);
+    }
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.generateMipmaps = false;
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.anisotropy = 8;
+    texture.needsUpdate = true;
+    const material = new THREE.MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      alphaTest: 0.04,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2
+    });
+    const label = new THREE.Mesh(
+      new THREE.PlaneGeometry(...COCKPIT_SWITCH_BANK_LAYOUT.labelSize),
+      material
+    );
+    label.position.set(
+      COCKPIT_SWITCH_BANK_LAYOUT.labelX,
+      y + COCKPIT_SWITCH_BANK_LAYOUT.labelYOffset,
+      COCKPIT_SWITCH_BANK_LAYOUT.surfaceZ
+    );
+    label.userData.excludeFromCollider = true;
+    return label;
+  }
+
   private createStations(): void {
-    this.createStation("helm", [-0.02, 0.62, 0.92], [0.12, 1.55, 0.2], [0.78, 0.8, 0.45]);
+    // Move the camera ~17 cm closer in fitted boat space so every dashboard
+    // control is comfortably reachable while preserving the safe walk pose.
+    this.createStation("helm", [-0.02, 0.62, 0.72], [0.12, 1.55, 0.2], [0.78, 0.8, 0.45]);
     this.createStation("fishing", [0.28, 0.62, -3.2], [0.3, 1.65, -3.88], [0.7, 0.8, 0.45]);
   }
 

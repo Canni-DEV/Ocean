@@ -82,6 +82,7 @@ export class EngineApp {
   private firstPersonActive = false;
   private gameplayMode: GameplayMode = "walking";
   private hasSpawnedPlayer = false;
+  private readonly inspectCabinOnStart = import.meta.env.DEV && new URLSearchParams(window.location.search).has("inspectCabin");
   private lastGameplayUiKey = "";
   private fishingMetrics: FishingDebugState | null = null;
   private fishingRopeBound = false;
@@ -304,7 +305,13 @@ export class EngineApp {
         this.firstPersonActive = true;
         this.firstPerson.setEnabled(true);
         this.input.setEnabled(false);
-        this.setGameplayMode("walking");
+        if (this.inspectCabinOnStart) {
+          this.firstPerson.enterStation();
+          this.firstPerson.setViewOrientation(0, -0.58);
+          this.setGameplayMode("helm");
+        } else {
+          this.setGameplayMode("walking");
+        }
       }
     }
 

@@ -9,7 +9,7 @@ export type InteractionFrame = {
   distance: number | null;
 };
 
-const CONTROL_REACH_M = 1.4;
+const CONTROL_REACH_M = 4;
 const STATION_REACH_M = 1.25;
 
 export class InteractionSystem {

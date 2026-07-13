@@ -77,6 +77,11 @@ export class FirstPersonController {
     return this.enabled;
   }
 
+  setViewOrientation(yawRad: number, pitchRad: number): void {
+    this.yaw = yawRad;
+    this.pitch = THREE.MathUtils.clamp(pitchRad, PITCH_MIN, PITCH_MAX);
+  }
+
   spawnOnDeck(bvh: MeshBVH, spawnHint: THREE.Vector3): void {
     this.yaw = 0;
     this.pitch = 0;
