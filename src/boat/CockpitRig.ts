@@ -6,9 +6,14 @@ import type {
   StationId
 } from "../gameplay/types";
 
-export type CockpitHit =
-  | { kind: "control"; target: InteractionTarget }
-  | { kind: "station"; station: StationId };
+export type CockpitHit = { kind: "control"; target: InteractionTarget };
+
+export type StationZoneDescriptor = {
+  id: StationId;
+  volume: THREE.Object3D;
+  size: THREE.Vector3;
+  facingTarget: THREE.Object3D;
+};
 
 type ControlVisual = {
   hitbox: THREE.Mesh;
@@ -77,9 +82,10 @@ const CONTROL_DEFINITIONS: ControlDefinition[] = [
 
 export class CockpitRig {
   private readonly model: THREE.Object3D;
-  private readonly interactionObjects: THREE.Object3D[] = [];
+  private readonly controlRaycastObjects: THREE.Object3D[] = [];
   private readonly controls = new Map<CockpitControlId, ControlVisual>();
   private readonly stationSockets = new Map<StationId, THREE.Object3D>();
+  private readonly stationZones: StationZoneDescriptor[] = [];
   private readonly needles: THREE.Object3D[] = [];
   private readonly wiperPivot = new THREE.Group();
   private readonly wetGlass: THREE.Mesh;
@@ -105,8 +111,12 @@ export class CockpitRig {
     return new CockpitRig(model);
   }
 
-  getRaycastObjects(): THREE.Object3D[] {
-    return this.interactionObjects;
+  getControlRaycastObjects(): THREE.Object3D[] {
+    return this.controlRaycastObjects;
+  }
+
+  getStationZones(): readonly StationZoneDescriptor[] {
+    return this.stationZones;
   }
 
   resolveHit(object: THREE.Object3D): CockpitHit | null {
@@ -124,6 +134,12 @@ export class CockpitRig {
     if (!socket) return null;
     socket.getWorldPosition(target);
     return boatRoot.worldToLocal(target);
+  }
+
+  getStationWorldPosition(station: StationId, target: THREE.Vector3): THREE.Vector3 | null {
+    const socket = this.stationSockets.get(station);
+    if (!socket) return null;
+    return socket.getWorldPosition(target);
   }
 
   setHighlighted(object: THREE.Object3D | null): void {
@@ -232,7 +248,7 @@ export class CockpitRig {
       hitbox.userData.cockpitHit = { kind: "control", target: definition } satisfies CockpitHit;
       hitbox.userData.excludeFromCollider = true;
       this.model.add(hitbox);
-      this.interactionObjects.push(hitbox);
+      this.controlRaycastObjects.push(hitbox);
 
       let indicator: THREE.Mesh | undefined;
       if (!isRadioKnob && !isPreset) {
@@ -303,8 +319,8 @@ export class CockpitRig {
   private createStations(): void {
     // Move the camera ~17 cm closer in fitted boat space so every dashboard
     // control is comfortably reachable while preserving the safe walk pose.
-    this.createStation("helm", [-0.02, 0.62, 0.72], [0.12, 1.55, 0.2], [0.78, 0.8, 0.45]);
-    this.createStation("fishing", [0.28, 0.62, -3.2], [0.3, 1.65, -3.88], [0.7, 0.8, 0.45]);
+    this.createStation("helm", [-0.02, 0.62, 0.72], [0.12, 1.55, 0.2], [1.2, 2.2, 1.1]);
+    this.createStation("fishing", [0.28, 0.62, -3.2], [0.3, 1.65, -3.88], [1.2, 2.2, 1.1]);
   }
 
   private createStation(id: StationId, socketPosition: [number, number, number], hitPosition: [number, number, number], size: [number, number, number]): void {
@@ -314,15 +330,16 @@ export class CockpitRig {
     this.model.add(socket);
     this.stationSockets.set(id, socket);
 
-    const hitbox = new THREE.Mesh(
-      new THREE.BoxGeometry(...size),
-      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.001, depthWrite: false })
-    );
-    hitbox.position.set(...hitPosition);
-    hitbox.userData.cockpitHit = { kind: "station", station: id } satisfies CockpitHit;
-    hitbox.userData.excludeFromCollider = true;
-    this.model.add(hitbox);
-    this.interactionObjects.push(hitbox);
+    const volume = new THREE.Object3D();
+    volume.name = `${id} station proximity zone`;
+    // The detector evaluates the eye/camera position, while sockets store the
+    // controller's feet position. Center the zone at the visible controls.
+    volume.position.set(socketPosition[0], hitPosition[1], socketPosition[2]);
+    const facingTarget = new THREE.Object3D();
+    facingTarget.name = `${id} station facing target`;
+    facingTarget.position.set(...hitPosition);
+    this.model.add(volume, facingTarget);
+    this.stationZones.push({ id, volume, size: new THREE.Vector3(...size), facingTarget });
   }
 
   private createInstruments(): void {

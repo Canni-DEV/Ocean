@@ -1,5 +1,6 @@
 import * as THREE from "three/webgpu";
 import type { BoatSystemsState } from "../gameplay/types";
+import type { FlashlightCue } from "../player/PlayerFlashlight";
 
 const RADIO_PATHS = [
   "/audio/radio/station-01.ogg",
@@ -34,6 +35,23 @@ export class CabinAudio {
     if (this.disposed) return;
     if (!this.context) this.createGraph();
     if (this.context?.state === "suspended") await this.context.resume();
+  }
+
+  playFlashlightCue(cue: FlashlightCue): void {
+    const context = this.context;
+    if (!context || context.state !== "running") return;
+    const now = context.currentTime;
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = cue === "charged" ? "sine" : "square";
+    oscillator.frequency.setValueAtTime(cue === "charged" ? 620 : cue === "empty" ? 105 : 180, now);
+    if (cue === "charged") oscillator.frequency.exponentialRampToValueAtTime(880, now + 0.12);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(cue === "charged" ? 0.025 : 0.018, now + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + (cue === "charged" ? 0.18 : 0.055));
+    oscillator.connect(gain).connect(context.destination);
+    oscillator.start(now);
+    oscillator.stop(now + (cue === "charged" ? 0.2 : 0.065));
   }
 
   update(state: BoatSystemsState, camera: THREE.Camera, boatRoot: THREE.Object3D): void {

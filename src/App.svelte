@@ -74,6 +74,10 @@
   function refuelBoat() {
     engine?.refuelBoat();
   }
+
+  function rechargeFlashlight() {
+    engine?.rechargeFlashlight();
+  }
 </script>
 
 <main class="relative h-full w-full overflow-hidden bg-black">
@@ -103,7 +107,7 @@
       aria-hidden={!debugPanelVisible}
       inert={!debugPanelVisible}
     >
-      <DebugPanel settings={$debugSettings} metrics={$engineMetrics} onChange={updateSettings} onResetBoat={resetBoat} onRefuel={refuelBoat} />
+      <DebugPanel settings={$debugSettings} metrics={$engineMetrics} onChange={updateSettings} onResetBoat={resetBoat} onRefuel={refuelBoat} onRechargeFlashlight={rechargeFlashlight} />
     </div>
   </div>
 </main>

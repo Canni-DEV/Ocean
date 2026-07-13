@@ -17,9 +17,10 @@
     onChange: (settings: DebugSettings) => void;
     onResetBoat: () => void;
     onRefuel: () => void;
+    onRechargeFlashlight: () => void;
   };
 
-  let { settings, metrics, onChange, onResetBoat, onRefuel }: Props = $props();
+  let { settings, metrics, onChange, onResetBoat, onRefuel, onRechargeFlashlight }: Props = $props();
   let showAdvanced = $state(false);
 
   const weatherOptions: Array<{ value: WeatherPresetName; label: string }> = [
@@ -176,7 +177,11 @@
           { label: "RPM", value: metrics.systems.instruments.rpm.toFixed(0) },
           { label: "Fuel", value: `${(metrics.systems.fuel * 100).toFixed(1)}%` },
           { label: "Bilge", value: `${(metrics.systems.bilgeLevel * 100).toFixed(1)}%` },
-          { label: "Radio", value: metrics.systems.radio.powered ? `CH ${metrics.systems.radio.station}` : "off" }
+          { label: "Radio", value: metrics.systems.radio.powered ? `CH ${metrics.systems.radio.station}` : "off" },
+          {
+            label: "Flashlight",
+            value: `${metrics.flashlight.powered ? "on" : metrics.flashlight.charging ? "charging" : "off"} ${(metrics.flashlight.charge01 * 100).toFixed(0)}%`
+          }
         ]
   );
 
@@ -461,6 +466,52 @@
         </div>
       {/each}
     </section>
+    <section class="mt-3 rounded border border-amber-300/20 bg-amber-950/20 p-2">
+      <div class="mb-2 flex items-center justify-between gap-2">
+        <h2 class="text-[11px] font-semibold uppercase tracking-normal text-amber-200">Player Flashlight</h2>
+        <button
+          class="rounded border border-amber-200/20 bg-amber-200/10 px-2 py-1 text-[10px] uppercase text-amber-100 hover:bg-amber-200/20"
+          type="button"
+          onclick={onRechargeFlashlight}
+        >
+          Cargar linterna
+        </button>
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <label>
+          <span>Autonomía {(settings.flashlightCapacitySeconds / 60).toFixed(0)} min</span>
+          <input min="5" max="120" step="1" type="range" value={settings.flashlightCapacitySeconds / 60} oninput={(event) => patch({ flashlightCapacitySeconds: numberValue(event) * 60 })} />
+        </label>
+        <label>
+          <span>Recarga {(settings.flashlightRechargeSeconds / 60).toFixed(0)} min</span>
+          <input min="1" max="60" step="1" type="range" value={settings.flashlightRechargeSeconds / 60} oninput={(event) => patch({ flashlightRechargeSeconds: numberValue(event) * 60 })} />
+        </label>
+        <label>
+          <span>Intensidad {settings.flashlightIntensityCd.toFixed(0)} cd</span>
+          <input min="100" max="2500" step="25" type="range" value={settings.flashlightIntensityCd} oninput={(event) => patch({ flashlightIntensityCd: numberValue(event) })} />
+        </label>
+        <label>
+          <span>Alcance {settings.flashlightRangeM.toFixed(0)} m</span>
+          <input min="10" max="100" step="1" type="range" value={settings.flashlightRangeM} oninput={(event) => patch({ flashlightRangeM: numberValue(event) })} />
+        </label>
+        <label>
+          <span>Semicono {settings.flashlightHalfAngleDeg.toFixed(0)}°</span>
+          <input min="8" max="35" step="1" type="range" value={settings.flashlightHalfAngleDeg} oninput={(event) => patch({ flashlightHalfAngleDeg: numberValue(event) })} />
+        </label>
+        <label>
+          <span>Suavidad {settings.flashlightPenumbra.toFixed(2)}</span>
+          <input min="0" max="1" step="0.05" type="range" value={settings.flashlightPenumbra} oninput={(event) => patch({ flashlightPenumbra: numberValue(event) })} />
+        </label>
+        <label>
+          <span>Batería baja {(settings.flashlightLowThreshold * 100).toFixed(0)}%</span>
+          <input min={Math.round((settings.flashlightCriticalThreshold + 0.01) * 100)} max="95" step="1" type="range" value={settings.flashlightLowThreshold * 100} oninput={(event) => patch({ flashlightLowThreshold: numberValue(event) / 100 })} />
+        </label>
+        <label>
+          <span>Batería crítica {(settings.flashlightCriticalThreshold * 100).toFixed(0)}%</span>
+          <input min="1" max={Math.round((settings.flashlightLowThreshold - 0.01) * 100)} step="1" type="range" value={settings.flashlightCriticalThreshold * 100} oninput={(event) => patch({ flashlightCriticalThreshold: numberValue(event) / 100 })} />
+        </label>
+      </div>
+    </section>
     <section class="mt-3 rounded border border-cyan-300/20 bg-cyan-950/20 p-2">
       <h2 class="mb-2 text-[11px] font-semibold uppercase tracking-normal text-cyan-200">Fishing Rope</h2>
       <div class="mb-2 grid grid-cols-2 gap-2">
@@ -598,7 +649,7 @@
   </section>
 
   <p class="mt-3 text-[11px] leading-snug text-slate-400">
-    Gameplay: WASD caminar. Mirá un puesto cercano y presioná F. Volante: W/S acelerador, A/D timón. Pesca: W/S brazo, A/D cuerda. Click y rueda operan la cabina. Esc libera el mouse; F abandona el puesto.
+    Gameplay: WASD caminar. Acercate y mirá hacia un puesto, luego presioná E. F alterna la linterna. Volante: W/S acelerador, A/D timón. Pesca: W/S brazo, A/D cuerda. Click y rueda operan la cabina. Esc libera el mouse; E abandona el puesto.
   </p>
 </aside>
 

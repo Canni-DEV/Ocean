@@ -7,6 +7,7 @@
   const modeLabel = $derived(
     state.mode === "helm" ? "CONDUCCIÓN" : state.mode === "fishing" ? "PESCA" : null
   );
+  const batteryPercent = $derived(Math.round(state.flashlight.charge01 * 100));
 </script>
 
 {#if !hidden && state.mode !== "debugFreeCamera"}
@@ -17,6 +18,19 @@
 
     {#if modeLabel}
       <div class="mode-badge">{modeLabel}</div>
+    {/if}
+
+    {#if state.flashlightIndicatorVisible}
+      <div
+        class="flashlight-battery"
+        class:charging={state.flashlight.charging}
+        class:low={state.flashlight.level === "low"}
+        class:critical={state.flashlight.level === "critical" || state.flashlight.level === "empty"}
+      >
+        <span class="flashlight-icon" aria-hidden="true">{state.flashlight.powered ? "●" : "○"}</span>
+        <span>{state.flashlight.charging ? "CARGANDO" : "LINTERNA"}</span>
+        <strong>{batteryPercent}%</strong>
+      </div>
     {/if}
 
     <div class="interaction-copy">
@@ -61,6 +75,27 @@
     letter-spacing: 0.18em;
     backdrop-filter: blur(5px);
   }
+  .flashlight-battery {
+    position: absolute;
+    right: 24px;
+    bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 9px;
+    border: 1px solid rgb(148 163 184 / 0.32);
+    border-radius: 3px;
+    background: rgb(3 12 22 / 0.6);
+    color: #cbd5e1;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    backdrop-filter: blur(5px);
+  }
+  .flashlight-battery strong { color: #f8fafc; font-variant-numeric: tabular-nums; }
+  .flashlight-battery.charging { border-color: rgb(52 211 153 / 0.45); color: #6ee7b7; }
+  .flashlight-battery.low { border-color: rgb(251 191 36 / 0.5); color: #fbbf24; }
+  .flashlight-battery.critical { border-color: rgb(248 113 113 / 0.55); color: #fca5a5; }
+  .flashlight-icon { font-size: 9px; text-shadow: 0 0 8px currentColor; }
   .interaction-copy {
     position: absolute;
     left: 50%;

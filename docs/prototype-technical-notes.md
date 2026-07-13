@@ -7,7 +7,8 @@ This prototype is intentionally WebGPU-only. It should fail with a clear message
 - `` ` `` (`Backquote`): show or hide the debug menu.
 - Click the canvas to enter pointer lock; `Esc` releases it without leaving an occupied station.
 - Walking: `WASD` moves the player around the boat and the mouse controls the view.
-- Look at the nearby helm or fishing controls and press `F` to occupy that station; press `F` again to leave it.
+- Stand near and face the helm or fishing controls, then press `E` to occupy that station; press `E` again to leave it.
+- `F` toggles the player's maritime flashlight. Its real-time battery recharges while off near the helm when the engine is running.
 - Helm: `W/S` adjusts persistent throttle and `A/D` operates the self-centering rudder.
 - Fishing: `W/S` raises/lowers the boom and `A/D` pays out/reels in the rope.
 - Cabin controls use the center reticle: left click toggles switches, holding click sounds the horn, and the mouse wheel adjusts radio volume/tuning.
@@ -15,7 +16,8 @@ This prototype is intentionally WebGPU-only. It should fail with a clear message
 
 ## Gameplay systems
 
-- `GameplayInputRouter` is the sole owner of keyboard, mouse and pointer-lock events. It routes one frame snapshot to walking, helm, fishing or debug-free-camera mode.
+- `GameplayInputRouter` is the sole owner of keyboard, mouse and pointer-lock events. It routes one frame snapshot to walking, helm, fishing, flashlight or debug-free-camera mode.
+- Station entry uses dedicated proximity/orientation zones; cockpit buttons use a separate control-only raycast with subtle aim assistance and hull occlusion.
 - The runtime cockpit rig adds non-colliding hit proxies, animated switches, six live instruments, navigation/anchor/cabin lights, wiper, wet glass and visible bilge water without modifying the source GLB.
 - Motor state gates propulsion and consumes a four-hour normalized fuel tank. Electrical accessories remain independent.
 - Radio has five lazy-loaded slots at `/audio/radio/station-01.ogg` through `station-05.ogg`; missing files fall back to procedural station tones and static.

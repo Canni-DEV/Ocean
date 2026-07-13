@@ -10,6 +10,7 @@ import { OceanPhysicsSampler } from "../ocean/OceanPhysicsSampler";
 import { OceanRenderer } from "../ocean/OceanRenderer";
 import { BoatWaterInteraction } from "../ocean/BoatWaterInteraction";
 import { FirstPersonController } from "../player/FirstPersonController";
+import { PlayerFlashlight, type FlashlightConfig } from "../player/PlayerFlashlight";
 import { OceanSimulation, OCEAN_QUALITY } from "../ocean/simulation/OceanSimulation";
 import { cloneWeather, easeWeatherProgress, lerpWeather, WEATHER_PRESETS } from "../state/weather";
 import { buildSeaState, lerpSeaState, type SeaStateParams } from "../state/seaState";
@@ -19,6 +20,7 @@ import { SceneDepthPass } from "./SceneDepthPass";
 import type { DebugSettings, EngineMetrics, FishingDebugState, QualityTier, WeatherPresetName, WeatherState } from "./types";
 import { GameplayInputRouter } from "../gameplay/GameplayInputRouter";
 import { InteractionSystem, type InteractionFrame } from "../gameplay/InteractionSystem";
+import { StationInteractionSystem, type StationCandidate } from "../gameplay/StationInteractionSystem";
 import type { GameplayMode, GameplayUiState, InputActionSnapshot } from "../gameplay/types";
 import { BoatSystems } from "../boat/BoatSystems";
 import { CabinAudio } from "../audio/CabinAudio";
@@ -50,8 +52,11 @@ export class EngineApp {
   private readonly stats = new FrameStats();
   private readonly systems = new BoatSystems();
   private readonly interaction = new InteractionSystem();
+  private readonly stationInteraction = new StationInteractionSystem();
   private readonly audio = new CabinAudio();
+  private readonly flashlight: PlayerFlashlight;
   private readonly stationPosition = new THREE.Vector3();
+  private readonly chargerPosition = new THREE.Vector3();
 
   private renderer: THREE.WebGPURenderer | null = null;
   private simulation: OceanSimulation | null = null;
@@ -86,6 +91,8 @@ export class EngineApp {
   private lastGameplayUiKey = "";
   private fishingMetrics: FishingDebugState | null = null;
   private fishingRopeBound = false;
+  private flashlightIndicatorRemainingS = 0;
+  private flashlightStatusMessage: string | null = null;
   private status: EngineMetrics["status"] = "booting";
   private error: string | null = null;
 
@@ -103,6 +110,7 @@ export class EngineApp {
     this.input = new InputController(this.canvas);
     this.gameplayInput = new GameplayInputRouter(this.canvas);
     this.firstPerson = new FirstPersonController(this.input.camera, this.canvas);
+    this.flashlight = new PlayerFlashlight(this.scene, flashlightConfigFromSettings(this.settings), this.activeQuality);
     this.fishingRopeSystem = new FishingRopeSystem({
       enabled: options.initialSettings.fishingRopeEnabled,
       minLengthM: options.initialSettings.fishingRopeMinLengthM,
@@ -140,6 +148,8 @@ export class EngineApp {
     if (settings.quality !== this.activeQuality && this.renderer) {
       this.rebuildOcean(settings.quality);
     }
+    this.flashlight.applyConfig(flashlightConfigFromSettings(settings));
+    this.flashlight.setQuality(settings.quality);
     if (settings.boatLightsOn !== previousDebugLight) this.systems.state.workLight = settings.boatLightsOn;
 
     this.ocean?.applySettings(settings);
@@ -179,6 +189,7 @@ export class EngineApp {
     this.atmosphere?.dispose();
     this.sceneDepthPass.dispose();
     this.audio.dispose();
+    this.flashlight.dispose();
     this.renderer?.dispose();
   }
 
@@ -191,6 +202,11 @@ export class EngineApp {
 
   refuelBoat(): void {
     this.systems.refuel();
+  }
+
+  rechargeFlashlight(): void {
+    this.flashlight.refill();
+    this.flashlightIndicatorRemainingS = 2;
   }
 
   private async init(): Promise<void> {
@@ -316,20 +332,6 @@ export class EngineApp {
     }
 
     const rig = this.boatVisual.getCockpitRig();
-    const engineBeforeInteraction = this.systems.state.engine;
-    const interactionFrame = this.interaction.update(
-      this.input.camera,
-      rig,
-      this.systems,
-      frameInput,
-      this.gameplayMode !== "debugFreeCamera"
-    );
-    if (engineBeforeInteraction !== "off" && this.systems.state.engine === "off") {
-      this.boatController.neutralize();
-    }
-    this.handleStationInput(frameInput, interactionFrame);
-    if (frameInput.primaryPressed) void this.audio.unlock();
-
     if (!this.settings.paused) {
       if (this.gameplayMode === "debugFreeCamera") {
         this.input.update(deltaSeconds, frameInput);
@@ -349,7 +351,40 @@ export class EngineApp {
           );
         }
       }
+    }
 
+    const stationCandidate = this.stationInteraction.update(
+      this.input.camera,
+      rig,
+      this.gameplayMode === "walking" && frameInput.pointerLocked
+    );
+    const engineBeforeInteraction = this.systems.state.engine;
+    const interactionFrame = this.interaction.update(
+      this.input.camera,
+      rig,
+      this.systems,
+      frameInput,
+      this.gameplayMode !== "debugFreeCamera",
+      this.boatVisual.group,
+      this.boatVisual.getColliderBVH()
+    );
+    if (engineBeforeInteraction !== "off" && this.systems.state.engine === "off") {
+      this.boatController.neutralize();
+    }
+    this.handleStationInput(frameInput, stationCandidate);
+    if (frameInput.primaryPressed || frameInput.flashlightPressed) void this.audio.unlock();
+    if (
+      frameInput.flashlightPressed &&
+      !this.settings.paused &&
+      this.firstPersonActive &&
+      this.gameplayMode !== "debugFreeCamera"
+    ) {
+      this.flashlight.toggle();
+      this.flashlightIndicatorRemainingS = 2;
+      this.flashlightStatusMessage = null;
+    }
+
+    if (!this.settings.paused) {
       boatControl = this.boatController.update(
         deltaSeconds,
         frameInput,
@@ -379,8 +414,27 @@ export class EngineApp {
       if (engineBeforeSystems !== "off" && this.systems.state.engine === "off") this.boatController.neutralize();
     }
     this.boatVisual.setSystemsState(this.systems.state, tunedWeather.precipitation, deltaSeconds);
+    this.flashlightIndicatorRemainingS = Math.max(0, this.flashlightIndicatorRemainingS - deltaSeconds);
+    this.flashlight.update({
+      deltaSeconds,
+      camera: this.input.camera,
+      active: this.firstPersonActive && this.gameplayMode !== "debugFreeCamera",
+      chargingAllowed: this.systems.state.engine === "running" && this.isNearHelmCharger(rig),
+      paused: this.settings.paused
+    });
+    const flashlightCue = this.flashlight.consumeCue();
+    if (flashlightCue) {
+      this.audio.playFlashlightCue(flashlightCue);
+      if (flashlightCue === "charged") {
+        this.flashlightIndicatorRemainingS = 2;
+        this.flashlightStatusMessage = "Carga de linterna completa";
+      } else if (flashlightCue === "empty") {
+        this.flashlightIndicatorRemainingS = 2;
+        this.flashlightStatusMessage = "Linterna sin batería";
+      }
+    }
     this.audio.update(this.systems.state, this.input.camera, this.boatVisual.group);
-    this.publishGameplayUi(frameInput, interactionFrame);
+    this.publishGameplayUi(frameInput, interactionFrame, stationCandidate);
 
     const environment = this.atmosphere.update({
       renderer: this.renderer,
@@ -584,39 +638,53 @@ export class EngineApp {
     if (mode !== "helm") this.systems.setHorn(false);
   }
 
-  private handleStationInput(input: InputActionSnapshot, frame: InteractionFrame): void {
-    if (!input.stationPressed || this.gameplayMode === "debugFreeCamera") return;
+  private handleStationInput(input: InputActionSnapshot, stationCandidate: StationCandidate | null): void {
+    if (!input.interactPressed || this.gameplayMode === "debugFreeCamera") return;
     if (this.gameplayMode === "helm" || this.gameplayMode === "fishing") {
       const collider = this.boatVisual.getColliderBVH();
       this.firstPerson.exitStation(collider ?? undefined);
       this.setGameplayMode("walking");
       return;
     }
-    if (frame.hit?.kind === "station") {
+    if (stationCandidate) {
       this.firstPerson.enterStation();
-      this.setGameplayMode(frame.hit.station);
+      this.setGameplayMode(stationCandidate.station);
     }
   }
 
-  private publishGameplayUi(input: InputActionSnapshot, frame: InteractionFrame): void {
+  private publishGameplayUi(
+    input: InputActionSnapshot,
+    frame: InteractionFrame,
+    stationCandidate: StationCandidate | null
+  ): void {
     let prompt: string | null = null;
     let detail: string | null = null;
     let targetLabel: string | null = null;
     let status: string | null = null;
 
+    const stationAction = this.gameplayMode === "helm"
+      ? "[E] Salir del volante"
+      : this.gameplayMode === "fishing"
+        ? "[E] Salir del puesto"
+        : stationCandidate?.station === "helm"
+          ? "[E] Tomar volante"
+          : stationCandidate?.station === "fishing"
+            ? "[E] Operar brazo de pesca"
+            : null;
+
     if (!input.pointerLocked && this.gameplayMode !== "debugFreeCamera") {
       status = "Click para tomar el control de la cámara";
-    } else if (frame.hit?.kind === "control") {
-      targetLabel = frame.hit.target.label;
-      prompt = frame.hit.target.clickLabel ? `[Click] ${frame.hit.target.clickLabel}` : null;
-      detail = frame.hit.target.wheelLabel ?? (this.gameplayMode === "helm" ? "[F] Salir del volante" : null);
-    } else if (this.gameplayMode === "walking" && frame.hit?.kind === "station") {
-      prompt = frame.hit.station === "helm" ? "[F] Tomar volante" : "[F] Operar brazo de pesca";
+    } else if (frame.controlHit) {
+      targetLabel = frame.controlHit.target.label;
+      prompt = frame.controlHit.target.clickLabel ? `[Click] ${frame.controlHit.target.clickLabel}` : null;
+      detail = [frame.controlHit.target.wheelLabel, stationAction].filter(Boolean).join(" · ") || null;
+    } else if (this.gameplayMode === "walking" && stationAction) {
+      prompt = stationAction;
     } else if (this.gameplayMode === "helm") {
-      prompt = "[F] Salir del volante";
+      prompt = stationAction;
       detail = "W/S acelerador · A/D timón";
     } else if (this.gameplayMode === "fishing") {
-      prompt = "[F] Salir del puesto";
+      prompt = stationAction;
       detail = "W/S brazo · A soltar · D recoger";
     }
 
@@ -624,14 +692,25 @@ export class EngineApp {
     if (this.systems.state.fuel <= 0) status = "Sin combustible";
     if (this.systems.state.bilgeLevel >= 0.6) status = "Nivel de sentina elevado";
 
+    const flashlight = this.flashlight.getState();
+    if (!status) {
+      if (flashlight.charging) status = `Cargando linterna · ${Math.round(flashlight.charge01 * 100)} %`;
+      else if (flashlight.level === "critical") status = "Batería de linterna crítica";
+      else if (flashlight.level === "low") status = "Batería de linterna baja";
+      else if (this.flashlightIndicatorRemainingS > 0) status = this.flashlightStatusMessage;
+    }
+
     const ui: GameplayUiState = {
       mode: this.gameplayMode,
       pointerLocked: input.pointerLocked,
       prompt,
       detail,
       targetLabel,
-      reticleActive: frame.hit?.kind === "control",
-      status
+      reticleActive: frame.controlHit !== null,
+      status,
+      flashlight,
+      flashlightIndicatorVisible:
+        this.flashlightIndicatorRemainingS > 0 || flashlight.charging || flashlight.level !== "normal"
     };
     const key = JSON.stringify(ui);
     if (key !== this.lastGameplayUiKey) {
@@ -671,10 +750,34 @@ export class EngineApp {
       firstPerson: this.firstPersonActive ? this.firstPerson.getMetrics() : null,
       fishing: this.fishingMetrics,
       systems: structuredClone(this.systems.state),
+      flashlight: this.flashlight.getState(),
       gameplayMode: this.gameplayMode,
       originOffsetMeters: { ...this.originOffsetMeters },
       status: this.status,
       error: this.error
     });
   }
+
+  private isNearHelmCharger(rig: ReturnType<BoatVisual["getCockpitRig"]>): boolean {
+    if (!rig || !this.firstPersonActive) return false;
+    const anchor = rig.getStationWorldPosition("helm", this.chargerPosition);
+    if (!anchor) return false;
+    this.input.camera.getWorldPosition(this.stationPosition);
+    const dx = this.stationPosition.x - anchor.x;
+    const dz = this.stationPosition.z - anchor.z;
+    return dx * dx + dz * dz <= 1.25 * 1.25 && Math.abs(this.stationPosition.y - anchor.y) <= 1.5;
+  }
+}
+
+function flashlightConfigFromSettings(settings: DebugSettings): FlashlightConfig {
+  return {
+    capacitySeconds: settings.flashlightCapacitySeconds,
+    rechargeSeconds: settings.flashlightRechargeSeconds,
+    intensityCd: settings.flashlightIntensityCd,
+    rangeM: settings.flashlightRangeM,
+    halfAngleDeg: settings.flashlightHalfAngleDeg,
+    penumbra: settings.flashlightPenumbra,
+    lowThreshold: settings.flashlightLowThreshold,
+    criticalThreshold: settings.flashlightCriticalThreshold
+  };
 }

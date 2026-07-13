@@ -7,7 +7,8 @@ export class GameplayInputRouter {
   private lookDeltaX = 0;
   private lookDeltaY = 0;
   private wheelSteps = 0;
-  private stationPressed = false;
+  private interactPressed = false;
+  private flashlightPressed = false;
   private primaryPressed = false;
   private primaryReleased = false;
   private primaryDown = false;
@@ -43,7 +44,8 @@ export class GameplayInputRouter {
       right: pointerLocked ? (this.keys.has("KeyD") ? 1 : 0) - (this.keys.has("KeyA") ? 1 : 0) : 0,
       vertical: pointerLocked ? (this.keys.has("Space") ? 1 : 0) - (this.keys.has("KeyC") ? 1 : 0) : 0,
       boost: pointerLocked && (this.keys.has("ShiftLeft") || this.keys.has("ShiftRight")),
-      stationPressed: pointerLocked && this.stationPressed,
+      interactPressed: pointerLocked && this.interactPressed,
+      flashlightPressed: pointerLocked && this.flashlightPressed,
       primaryPressed: this.primaryPressed,
       primaryReleased: this.primaryReleased,
       primaryDown: this.primaryDown,
@@ -52,7 +54,8 @@ export class GameplayInputRouter {
       lookDeltaY: this.lookDeltaY,
       pointerLocked
     };
-    this.stationPressed = false;
+    this.interactPressed = false;
+    this.flashlightPressed = false;
     this.primaryPressed = false;
     this.primaryReleased = false;
     this.wheelSteps = 0;
@@ -76,7 +79,8 @@ export class GameplayInputRouter {
   }
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
-    if (event.code === "KeyF" && !event.repeat) this.stationPressed = true;
+    if (event.code === "KeyE" && !event.repeat) this.interactPressed = true;
+    if (event.code === "KeyF" && !event.repeat) this.flashlightPressed = true;
     this.keys.add(event.code);
   };
 

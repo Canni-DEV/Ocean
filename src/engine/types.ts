@@ -1,4 +1,4 @@
-import type { BoatSystemsState, GameplayMode } from "../gameplay/types";
+import type { BoatSystemsState, FlashlightState, GameplayMode } from "../gameplay/types";
 
 export type QualityTier = "low" | "medium" | "high";
 
@@ -141,6 +141,7 @@ export type EngineMetrics = {
   firstPerson: FirstPersonDebugState | null;
   fishing: FishingDebugState | null;
   systems: BoatSystemsState | null;
+  flashlight: FlashlightState;
   gameplayMode: GameplayMode;
   originOffsetMeters: { x: number; z: number };
   status: "booting" | "running" | "error";
@@ -185,6 +186,14 @@ export type DebugSettings = {
   /** Master toggle for all boat lights (spotlights). Off by default. */
   boatLightsOn: boolean;
   firstPerson: boolean;
+  flashlightCapacitySeconds: number;
+  flashlightRechargeSeconds: number;
+  flashlightIntensityCd: number;
+  flashlightRangeM: number;
+  flashlightHalfAngleDeg: number;
+  flashlightPenumbra: number;
+  flashlightLowThreshold: number;
+  flashlightCriticalThreshold: number;
   fishingRopeEnabled: boolean;
   fishingRopeRadius: number;
   fishingRopeRenderMode: FishingRopeRenderMode;

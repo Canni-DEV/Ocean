@@ -5,7 +5,8 @@ export type InputActionSnapshot = {
   right: number;
   vertical: number;
   boost: boolean;
-  stationPressed: boolean;
+  interactPressed: boolean;
+  flashlightPressed: boolean;
   primaryPressed: boolean;
   primaryReleased: boolean;
   primaryDown: boolean;
@@ -21,6 +22,15 @@ export type StationDescriptor = {
   id: StationId;
   enterLabel: string;
   mode: Extract<GameplayMode, "helm" | "fishing">;
+};
+
+export type FlashlightLevel = "normal" | "low" | "critical" | "empty";
+
+export type FlashlightState = {
+  powered: boolean;
+  charge01: number;
+  charging: boolean;
+  level: FlashlightLevel;
 };
 
 export type CockpitControlId =
@@ -88,6 +98,8 @@ export type GameplayUiState = {
   targetLabel: string | null;
   reticleActive: boolean;
   status: string | null;
+  flashlight: FlashlightState;
+  flashlightIndicatorVisible: boolean;
 };
 
 export const DEFAULT_GAMEPLAY_UI: GameplayUiState = {
@@ -97,5 +109,7 @@ export const DEFAULT_GAMEPLAY_UI: GameplayUiState = {
   detail: null,
   targetLabel: null,
   reticleActive: false,
-  status: "Click para tomar el control de la cámara"
+  status: "Click para tomar el control de la cámara",
+  flashlight: { powered: false, charge01: 1, charging: false, level: "normal" },
+  flashlightIndicatorVisible: false
 };
