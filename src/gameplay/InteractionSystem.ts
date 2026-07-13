@@ -1,13 +1,14 @@
 import * as THREE from "three/webgpu";
 import { MeshBVH } from "three-mesh-bvh";
 import type { CockpitRig, CockpitHit } from "../boat/CockpitRig";
-import type { InputActionSnapshot } from "./types";
+import type { CockpitControlId, InputActionSnapshot } from "./types";
 import { BoatSystems } from "../boat/BoatSystems";
 
 export type InteractionFrame = {
   controlHit: CockpitHit | null;
   controlObject: THREE.Object3D | null;
   controlDistance: number | null;
+  activatedControl: CockpitControlId | null;
 };
 
 type AssistedCandidate = {
@@ -45,7 +46,7 @@ export class InteractionSystem {
   ): InteractionFrame {
     if (!rig || !input.pointerLocked || !canInteract) {
       this.clear(rig, systems);
-      return { controlHit: null, controlObject: null, controlDistance: null };
+      return { controlHit: null, controlObject: null, controlDistance: null, activatedControl: null };
     }
 
     this.raycaster.setFromCamera(this.screenCenter, camera);
@@ -58,6 +59,7 @@ export class InteractionSystem {
     const resolved = exact ?? this.resolveAssisted(rig, boatRoot, collider);
     this.assistedObject = exact ? null : resolved?.object ?? null;
     rig.setHighlighted(resolved?.object ?? null);
+    let activatedControl: CockpitControlId | null = null;
 
     if (resolved?.hit) {
       const id = resolved.hit.target.id;
@@ -65,7 +67,7 @@ export class InteractionSystem {
         systems.setHorn(input.primaryDown);
       } else {
         systems.setHorn(false);
-        if (input.primaryPressed) systems.activate(id);
+        if (input.primaryPressed && systems.activate(id)) activatedControl = id;
         if (input.wheelSteps !== 0) systems.adjust(id, input.wheelSteps);
       }
     } else {
@@ -75,7 +77,8 @@ export class InteractionSystem {
     return {
       controlHit: resolved?.hit ?? null,
       controlObject: resolved?.object ?? null,
-      controlDistance: resolved?.distance ?? null
+      controlDistance: resolved?.distance ?? null,
+      activatedControl
     };
   }
 

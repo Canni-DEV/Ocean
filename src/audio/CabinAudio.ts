@@ -23,6 +23,8 @@ export class CabinAudio {
   private radioGain: GainNode | null = null;
   private radioFallbackGain: GainNode | null = null;
   private radioTrack: AudioBufferSourceNode | null = null;
+  private controlClickPanner: PannerNode | null = null;
+  private controlClickBuffer: AudioBuffer | null = null;
   private readonly sourcePanners: PannerNode[] = [];
   private currentStation = 0;
   private stationLoadToken = 0;
@@ -52,6 +54,15 @@ export class CabinAudio {
     oscillator.connect(gain).connect(context.destination);
     oscillator.start(now);
     oscillator.stop(now + (cue === "charged" ? 0.2 : 0.065));
+  }
+
+  playControlClick(): void {
+    const context = this.context;
+    if (!context || context.state !== "running" || !this.controlClickBuffer || !this.controlClickPanner) return;
+    const source = context.createBufferSource();
+    source.buffer = this.controlClickBuffer;
+    source.connect(this.controlClickPanner);
+    source.start();
   }
 
   update(state: BoatSystemsState, camera: THREE.Camera, boatRoot: THREE.Object3D): void {
@@ -84,6 +95,8 @@ export class CabinAudio {
     this.radioTrack?.stop();
     void this.context?.close();
     this.context = null;
+    this.controlClickPanner = null;
+    this.controlClickBuffer = null;
   }
 
   private createGraph(): void {
@@ -98,6 +111,8 @@ export class CabinAudio {
     const pumpPanner = this.createPanner(context, master);
     const radioLeft = this.createPanner(context, master);
     const radioRight = this.createPanner(context, master);
+    this.controlClickPanner = this.createPanner(context, master);
+    this.controlClickBuffer = this.createControlClickBuffer(context);
 
     this.engineOscillator = context.createOscillator();
     this.engineOscillator.type = "sawtooth";
@@ -161,6 +176,26 @@ export class CabinAudio {
     return buffer;
   }
 
+  private createControlClickBuffer(context: AudioContext): AudioBuffer {
+    const durationS = 0.075;
+    const buffer = context.createBuffer(1, Math.ceil(context.sampleRate * durationS), context.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let index = 0; index < data.length; index += 1) {
+      const time = index / context.sampleRate;
+      const firstImpact = Math.exp(-time * 95);
+      const returnTime = Math.max(0, time - 0.032);
+      const returnImpact = time >= 0.032 ? Math.exp(-returnTime * 125) : 0;
+      const mechanicalTone = Math.sin(time * Math.PI * 2 * (460 - time * 2100));
+      const returnTone = Math.sin(returnTime * Math.PI * 2 * 260);
+      const noise = Math.random() * 2 - 1;
+      data[index] =
+        mechanicalTone * firstImpact * 0.085 +
+        noise * firstImpact * 0.028 +
+        returnTone * returnImpact * 0.035;
+    }
+    return buffer;
+  }
+
   private async loadStation(station: number): Promise<void> {
     const context = this.context;
     if (!context) return;
@@ -205,7 +240,8 @@ export class CabinAudio {
 
   private updatePanners(boatRoot: THREE.Object3D): void {
     const localPositions = [
-      [0, 0.8, 3.1], [0, 1.4, 2.4], [0, 0.7, 0], [-0.65, 1.9, 0], [0.65, 1.9, 0]
+      [0, 0.8, 3.1], [0, 1.4, 2.4], [0, 0.7, 0], [-0.65, 1.9, 0], [0.65, 1.9, 0],
+      [0, 1.25, 0.9]
     ];
     this.sourcePanners.forEach((panner, index) => {
       this.tempPosition.fromArray(localPositions[index] ?? [0, 1, 0]);

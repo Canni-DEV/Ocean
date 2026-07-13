@@ -368,11 +368,17 @@ export class EngineApp {
       this.boatVisual.group,
       this.boatVisual.getColliderBVH()
     );
+    if (interactionFrame.activatedControl) {
+      rig?.triggerControlPress(interactionFrame.activatedControl);
+      void this.audio.unlock().then(() => this.audio.playControlClick());
+    }
     if (engineBeforeInteraction !== "off" && this.systems.state.engine === "off") {
       this.boatController.neutralize();
     }
     this.handleStationInput(frameInput, stationCandidate);
-    if (frameInput.primaryPressed || frameInput.flashlightPressed) void this.audio.unlock();
+    if (!interactionFrame.activatedControl && (frameInput.primaryPressed || frameInput.flashlightPressed)) {
+      void this.audio.unlock();
+    }
     if (
       frameInput.flashlightPressed &&
       !this.settings.paused &&

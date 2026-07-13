@@ -19,7 +19,10 @@ type ControlVisual = {
   hitbox: THREE.Mesh;
   visual: THREE.Object3D;
   indicator?: THREE.Mesh;
+  hoverRing?: THREE.Mesh;
   animateToggle: boolean;
+  pressRemainingS: number;
+  restPosition: THREE.Vector3;
 };
 
 /**
@@ -40,6 +43,44 @@ export const COCKPIT_SWITCH_BANK_LAYOUT = {
   indicatorZ: 0.1245,
   indicatorRadius: 0.0085
 } as const;
+
+/** Calibrated against the five black push-buttons in the original GLB. */
+export const COCKPIT_ACCESSORY_BANK_LAYOUT = {
+  ids: ["anchorLight", "instrumentLights", "wipers", "bilgePump"] as const,
+  buttonPositions: [
+    [-0.098154, 1.7089, 0.0323],
+    [0, 1.7089, 0.0323],
+    [0.098154, 1.7089, 0.0323],
+    [0.1931, 1.7089, 0.0323]
+  ] as const,
+  // The original cylinders use local Y as their axis. In fitted model space
+  // their outward axis points mostly upward, with a slight aft tilt.
+  surfaceNormal: [0, 0.930757, 0.365638] as const,
+  surfaceOffset: 0.006,
+  hitboxSize: [0.065, 0.065, 0.035] as const,
+  indicatorRadius: 0.013,
+  hoverInnerRadius: 0.024,
+  hoverOuterRadius: 0.029,
+  pressDepth: 0.006,
+  pressDurationS: 0.13
+} as const;
+
+const ACCESSORY_SWITCH_IDS = new Set<CockpitControlId>(COCKPIT_ACCESSORY_BANK_LAYOUT.ids);
+const ACCESSORY_SURFACE_NORMAL = new THREE.Vector3(
+  ...COCKPIT_ACCESSORY_BANK_LAYOUT.surfaceNormal
+).normalize();
+const ACCESSORY_SURFACE_QUATERNION = new THREE.Quaternion().setFromUnitVectors(
+  new THREE.Vector3(0, 0, 1),
+  ACCESSORY_SURFACE_NORMAL
+);
+
+function accessorySwitchPosition(id: CockpitControlId): [number, number, number] {
+  const index = COCKPIT_ACCESSORY_BANK_LAYOUT.ids.indexOf(
+    id as (typeof COCKPIT_ACCESSORY_BANK_LAYOUT.ids)[number]
+  );
+  const position = COCKPIT_ACCESSORY_BANK_LAYOUT.buttonPositions[Math.max(0, index)];
+  return [position[0], position[1], position[2]];
+}
 
 const LOWER_SWITCH_IDS = new Set<CockpitControlId>([
   "engine",
@@ -67,10 +108,10 @@ const CONTROL_DEFINITIONS: ControlDefinition[] = [
   { id: "workLight", label: "Foco de proa", panelLabel: "PROA", clickLabel: "Encender / apagar", position: lowerSwitchPosition(2) },
   { id: "horn", label: "Bocina", panelLabel: "HORN", clickLabel: "Mantener pulsado", position: lowerSwitchPosition(3) },
   { id: "navigationLights", label: "Luces de navegación", clickLabel: "Alternar", position: [-0.33, 1.7, -0.02] },
-  { id: "anchorLight", label: "Luz de fondeo", clickLabel: "Alternar", position: [-0.18, 1.7, -0.02] },
-  { id: "instrumentLights", label: "Iluminación de instrumentos", clickLabel: "Alternar", position: [-0.03, 1.7, -0.02] },
-  { id: "wipers", label: "Limpiaparabrisas", clickLabel: "Alternar", position: [0.12, 1.7, -0.02] },
-  { id: "bilgePump", label: "Bomba de achique", clickLabel: "Alternar", position: [0.27, 1.7, -0.02] },
+  { id: "anchorLight", label: "Luz de fondeo", clickLabel: "Alternar", position: accessorySwitchPosition("anchorLight") },
+  { id: "instrumentLights", label: "Iluminación de instrumentos", clickLabel: "Alternar", position: accessorySwitchPosition("instrumentLights") },
+  { id: "wipers", label: "Limpiaparabrisas", clickLabel: "Alternar", position: accessorySwitchPosition("wipers") },
+  { id: "bilgePump", label: "Bomba de achique", clickLabel: "Alternar", position: accessorySwitchPosition("bilgePump") },
   { id: "radioPowerVolume", label: "Radio / volumen", clickLabel: "Click: encender", wheelLabel: "Rueda: volumen", position: [-0.28, 1.9, -0.23] },
   { id: "radioTuning", label: "Sintonía", clickLabel: "", wheelLabel: "Rueda: emisora", position: [0.28, 1.9, -0.23] },
   { id: "radioPreset1", label: "Memoria 1", clickLabel: "Seleccionar", position: [-0.12, 1.82, -0.18] },
@@ -87,6 +128,19 @@ export class CockpitRig {
   private readonly stationSockets = new Map<StationId, THREE.Object3D>();
   private readonly stationZones: StationZoneDescriptor[] = [];
   private readonly needles: THREE.Object3D[] = [];
+  private readonly instrumentDialMaterial = new THREE.MeshStandardMaterial({
+    color: 0x101b25,
+    emissive: 0x2a1303,
+    emissiveIntensity: 0,
+    metalness: 0.35,
+    roughness: 0.3
+  });
+  private readonly instrumentNeedleMaterial = new THREE.MeshStandardMaterial({
+    color: 0x9d3821,
+    emissive: 0xff8a3d,
+    emissiveIntensity: 0.08,
+    roughness: 0.45
+  });
   private readonly wiperPivot = new THREE.Group();
   private readonly wetGlass: THREE.Mesh;
   private readonly bilgeWater: THREE.Mesh;
@@ -95,7 +149,9 @@ export class CockpitRig {
   private readonly navStarboard = new THREE.PointLight(0x35ff89, 0, 5, 2);
   private readonly anchorLight = new THREE.PointLight(0xf5f7ff, 0, 7, 2);
   private highlighted: THREE.Object3D | null = null;
+  private highlightedControl: CockpitControlId | null = null;
   private wiperPhase = 0;
+  private instrumentLightLevel = 0;
 
   private constructor(model: THREE.Object3D) {
     this.model = model;
@@ -144,9 +200,14 @@ export class CockpitRig {
 
   setHighlighted(object: THREE.Object3D | null): void {
     if (this.highlighted === object) return;
-    if (this.highlighted) this.highlighted.scale.setScalar(1);
     this.highlighted = object;
-    if (object) object.scale.setScalar(1.08);
+    this.highlightedControl = object ? this.resolveHit(object)?.target.id ?? null : null;
+  }
+
+  triggerControlPress(id: CockpitControlId): void {
+    const control = this.controls.get(id);
+    if (!control || !ACCESSORY_SWITCH_IDS.has(id)) return;
+    control.pressRemainingS = COCKPIT_ACCESSORY_BANK_LAYOUT.pressDurationS;
   }
 
   update(state: BoatSystemsState, precipitation: number, deltaSeconds: number): void {
@@ -177,10 +238,33 @@ export class CockpitRig {
       }
       const material = control.indicator?.material as THREE.MeshStandardMaterial | undefined;
       if (material) {
-        material.emissive.set(on ? 0x58ff9a : 0x06120a);
-        material.emissiveIntensity = on ? 4 : 0.15;
+        const isAccessorySwitch = ACCESSORY_SWITCH_IDS.has(id);
+        material.emissive.set(on ? (isAccessorySwitch ? 0x36d982 : 0x58ff9a) : 0x06120a);
+        material.emissiveIntensity = on ? (isAccessorySwitch ? 2.2 : 4) : 0.15;
+      }
+      const hoverMaterial = control.hoverRing?.material as THREE.MeshBasicMaterial | undefined;
+      if (hoverMaterial) {
+        const targetOpacity = this.highlightedControl === id ? 0.56 : 0;
+        hoverMaterial.opacity += (targetOpacity - hoverMaterial.opacity) * (1 - Math.exp(-deltaSeconds * 18));
+      }
+      if (ACCESSORY_SWITCH_IDS.has(id)) {
+        control.pressRemainingS = Math.max(0, control.pressRemainingS - deltaSeconds);
+        const elapsed = COCKPIT_ACCESSORY_BANK_LAYOUT.pressDurationS - control.pressRemainingS;
+        const progress = THREE.MathUtils.clamp(elapsed / COCKPIT_ACCESSORY_BANK_LAYOUT.pressDurationS, 0, 1);
+        const travel = control.pressRemainingS > 0
+          ? Math.sin(progress * Math.PI) * COCKPIT_ACCESSORY_BANK_LAYOUT.pressDepth
+          : 0;
+        control.visual.position
+          .copy(control.restPosition)
+          .addScaledVector(ACCESSORY_SURFACE_NORMAL, -travel);
       }
     }
+
+    const instrumentTarget = state.instrumentLights ? 1 : 0;
+    this.instrumentLightLevel +=
+      (instrumentTarget - this.instrumentLightLevel) * (1 - Math.exp(-deltaSeconds * 8));
+    this.instrumentDialMaterial.emissiveIntensity = this.instrumentLightLevel * 1.85;
+    this.instrumentNeedleMaterial.emissiveIntensity = 0.08 + this.instrumentLightLevel * 2.8;
 
     const readings = state.instruments;
     const values = [
@@ -216,12 +300,19 @@ export class CockpitRig {
       const isRadioKnob = definition.id === "radioPowerVolume" || definition.id === "radioTuning";
       const isPreset = definition.id.startsWith("radioPreset");
       const isLowerSwitch = LOWER_SWITCH_IDS.has(definition.id);
+      const isAccessorySwitch = ACCESSORY_SWITCH_IDS.has(definition.id);
       let visual: THREE.Object3D;
       if (isLowerSwitch) {
         visual = this.createPanelLabel(
           definition.panelLabel ?? definition.label,
           definition.position[1]
         );
+      } else if (isAccessorySwitch) {
+        visual = new THREE.Group();
+        visual.position
+          .set(...definition.position)
+          .addScaledVector(ACCESSORY_SURFACE_NORMAL, COCKPIT_ACCESSORY_BANK_LAYOUT.surfaceOffset);
+        visual.quaternion.copy(ACCESSORY_SURFACE_QUATERNION);
       } else {
         const geometry = isRadioKnob
           ? new THREE.CylinderGeometry(0.055, 0.055, 0.04, 18)
@@ -242,24 +333,50 @@ export class CockpitRig {
 
       const hitboxGeometry = isLowerSwitch
         ? new THREE.BoxGeometry(...COCKPIT_SWITCH_BANK_LAYOUT.hitboxSize)
+        : isAccessorySwitch
+          ? new THREE.BoxGeometry(...COCKPIT_ACCESSORY_BANK_LAYOUT.hitboxSize)
         : new THREE.BoxGeometry(isPreset ? 0.06 : 0.11, isPreset ? 0.06 : 0.09, 0.1);
       const hitbox = new THREE.Mesh(hitboxGeometry, hitMaterial);
       hitbox.position.set(...definition.position);
+      if (isAccessorySwitch) hitbox.quaternion.copy(ACCESSORY_SURFACE_QUATERNION);
       hitbox.userData.cockpitHit = { kind: "control", target: definition } satisfies CockpitHit;
       hitbox.userData.excludeFromCollider = true;
       this.model.add(hitbox);
       this.controlRaycastObjects.push(hitbox);
 
       let indicator: THREE.Mesh | undefined;
+      let hoverRing: THREE.Mesh | undefined;
       if (!isRadioKnob && !isPreset) {
-        const indicatorGeometry = isLowerSwitch
+        const indicatorGeometry = isAccessorySwitch
+          ? new THREE.SphereGeometry(COCKPIT_ACCESSORY_BANK_LAYOUT.indicatorRadius, 20, 12)
+          : isLowerSwitch
           ? new THREE.CircleGeometry(COCKPIT_SWITCH_BANK_LAYOUT.indicatorRadius, 18)
           : new THREE.SphereGeometry(0.012, 10, 8);
         indicator = new THREE.Mesh(
           indicatorGeometry,
           new THREE.MeshStandardMaterial({ color: 0x111713, emissive: 0x06120a, roughness: 0.5 })
         );
-        if (isLowerSwitch) {
+        if (isAccessorySwitch) {
+          visual.add(indicator);
+          hoverRing = new THREE.Mesh(
+            new THREE.TorusGeometry(
+              (COCKPIT_ACCESSORY_BANK_LAYOUT.hoverInnerRadius + COCKPIT_ACCESSORY_BANK_LAYOUT.hoverOuterRadius) / 2,
+              (COCKPIT_ACCESSORY_BANK_LAYOUT.hoverOuterRadius - COCKPIT_ACCESSORY_BANK_LAYOUT.hoverInnerRadius) / 2,
+              8,
+              28
+            ),
+            new THREE.MeshBasicMaterial({
+              color: 0xa9c8bb,
+              transparent: true,
+              opacity: 0,
+              depthWrite: false,
+              toneMapped: false
+            })
+          );
+          hoverRing.position.z = 0.008;
+          hoverRing.userData.excludeFromCollider = true;
+          visual.add(hoverRing);
+        } else if (isLowerSwitch) {
           indicator.position.set(
             COCKPIT_SWITCH_BANK_LAYOUT.indicatorX,
             definition.position[1],
@@ -269,9 +386,17 @@ export class CockpitRig {
           indicator.position.copy(visual.position).add(new THREE.Vector3(0.065, 0, 0.025));
         }
         indicator.userData.excludeFromCollider = true;
-        this.model.add(indicator);
+        if (!isAccessorySwitch) this.model.add(indicator);
       }
-      this.controls.set(definition.id, { hitbox, visual, indicator, animateToggle: !isLowerSwitch });
+      this.controls.set(definition.id, {
+        hitbox,
+        visual,
+        indicator,
+        hoverRing,
+        animateToggle: !isLowerSwitch && !isAccessorySwitch,
+        pressRemainingS: 0,
+        restPosition: visual.position.clone()
+      });
     }
   }
 
@@ -350,13 +475,16 @@ export class CockpitRig {
     for (const position of positions) {
       const dial = new THREE.Mesh(
         new THREE.CircleGeometry(0.07, 24),
-        new THREE.MeshStandardMaterial({ color: 0x101b25, metalness: 0.35, roughness: 0.3 })
+        this.instrumentDialMaterial
       );
       dial.position.set(...position);
       dial.rotation.x = -0.16;
       dial.userData.excludeFromCollider = true;
       this.model.add(dial);
-      const needle = new THREE.Mesh(new THREE.BoxGeometry(0.006, 0.052, 0.006), new THREE.MeshBasicMaterial({ color: 0xff6b3d }));
+      const needle = new THREE.Mesh(
+        new THREE.BoxGeometry(0.006, 0.052, 0.006),
+        this.instrumentNeedleMaterial
+      );
       needle.position.copy(dial.position).add(new THREE.Vector3(0, 0.025, 0.006));
       needle.rotation.x = dial.rotation.x;
       needle.userData.excludeFromCollider = true;

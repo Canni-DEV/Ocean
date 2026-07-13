@@ -2,7 +2,11 @@ import * as THREE from "three/webgpu";
 import { describe, expect, it } from "vitest";
 import { MeshBVH } from "three-mesh-bvh";
 import { BoatSystems } from "../boat/BoatSystems";
-import { COCKPIT_SWITCH_BANK_LAYOUT, type CockpitRig } from "../boat/CockpitRig";
+import {
+  COCKPIT_ACCESSORY_BANK_LAYOUT,
+  COCKPIT_SWITCH_BANK_LAYOUT,
+  type CockpitRig
+} from "../boat/CockpitRig";
 import { InteractionSystem } from "./InteractionSystem";
 import type { InputActionSnapshot } from "./types";
 
@@ -41,6 +45,23 @@ describe("InteractionSystem", () => {
     expect(layout.hitboxSize[1]).toBeLessThan(minimumRowSpacing);
   });
 
+  it("maps the four accessory controls to separated right-hand push-buttons", () => {
+    const layout = COCKPIT_ACCESSORY_BANK_LAYOUT;
+    expect(layout.ids).toEqual(["anchorLight", "instrumentLights", "wipers", "bilgePump"]);
+    expect(layout.buttonPositions).toHaveLength(layout.ids.length);
+    const minimumSpacing = Math.min(
+      ...layout.buttonPositions.slice(1).map((position, index) =>
+        position[0] - layout.buttonPositions[index][0]
+      )
+    );
+    expect(layout.hitboxSize[0]).toBeLessThan(minimumSpacing);
+    expect(Math.hypot(...layout.surfaceNormal)).toBeCloseTo(1, 5);
+    expect(layout.surfaceNormal[1]).toBeGreaterThan(0.9);
+    expect(layout.surfaceNormal[2]).toBeGreaterThan(0);
+    expect(layout.indicatorRadius).toBeLessThan(layout.hoverInnerRadius);
+    expect(layout.hoverInnerRadius).toBeLessThan(layout.hoverOuterRadius);
+  });
+
   it("activates a centered nearby control", () => {
     const interaction = new InteractionSystem();
     const systems = new BoatSystems();
@@ -48,6 +69,26 @@ describe("InteractionSystem", () => {
     camera.updateMatrixWorld(true);
     const result = interaction.update(camera, fakeRig(3.8), systems, frame(true), true);
     expect(result.controlHit?.kind).toBe("control");
+    expect(result.activatedControl).toBe("cabinLight");
+    expect(systems.state.cabinLight).toBe(true);
+  });
+
+  it("reports activation once on press instead of repeating while held", () => {
+    const interaction = new InteractionSystem();
+    const systems = new BoatSystems();
+    const camera = new THREE.PerspectiveCamera();
+    camera.updateMatrixWorld(true);
+    const rig = fakeRig(3.8);
+    const pressed = interaction.update(camera, rig, systems, frame(true), true);
+    const held = interaction.update(
+      camera,
+      rig,
+      systems,
+      { ...frame(false), primaryDown: true },
+      true
+    );
+    expect(pressed.activatedControl).toBe("cabinLight");
+    expect(held.activatedControl).toBeNull();
     expect(systems.state.cabinLight).toBe(true);
   });
 
