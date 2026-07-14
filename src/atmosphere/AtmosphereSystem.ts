@@ -43,8 +43,9 @@ const ZERO_CLOUD_WEATHER: Partial<WeatherState> = {
 export class AtmosphereSystem {
   private readonly scene: THREE.Scene;
   private readonly sky: SkyMesh;
-  private readonly sunLight = new THREE.DirectionalLight(0xfff2d0, 2.4);
-  private readonly moonLight = new THREE.DirectionalLight(0x9fb8ff, 0.18);
+  // Intensity 0 until first update; always visible so WebGPU light pipelines stay sticky across dusk/dawn.
+  private readonly sunLight = new THREE.DirectionalLight(0xfff2d0, 0);
+  private readonly moonLight = new THREE.DirectionalLight(0x9fb8ff, 0);
   private readonly ambientLight = new THREE.HemisphereLight(0xb9dcff, 0x0d1520, 0.28);
   private readonly moonDisc: THREE.Mesh;
   private readonly moonMaterial: THREE.MeshBasicMaterial;
@@ -146,9 +147,18 @@ export class AtmosphereSystem {
     this.sky.cloudCoverage.value = 0;
     this.sky.cloudDensity.value = 0;
 
+    // Persistent celestial lights (intensity 0 when idle) avoid pipeline rebuilds at dusk/dawn.
+    this.sunLight.visible = true;
+    this.moonLight.visible = true;
     // Per-pixel cloud shadow on everything lit by the sun (the ocean)
     this.sunLight.castShadow = true;
     (this.sunLight.shadow as any).shadowNode = this.createSunShadowNode();
+  }
+
+  /** Keep sun/moon in the WebGPU light set; contribution is intensity-only. */
+  warmUpCelestialLights(): void {
+    this.sunLight.visible = true;
+    this.moonLight.visible = true;
   }
 
   get cloudComputeMs(): number {
@@ -308,16 +318,13 @@ export class AtmosphereSystem {
     }
     this.cloudsReadyForRender = cloudsEnabled;
 
-    // Lights — direct contribution fades below the horizon via elevation masks
+    // Lights — contribution fades below the horizon via elevation masks (intensity only; never .visible).
     this.sunLight.position.copy(sun).multiplyScalar(1200);
     this.sunLight.color.set(environment.sunColor);
     this.sunLight.intensity = environment.sunIntensity;
-    this.sunLight.visible = environment.celestial.sunDirectMask > 0.01;
     this.moonLight.position.copy(moon).multiplyScalar(1200);
     this.moonLight.color.set(environment.moonColor);
     this.moonLight.intensity = environment.moonIntensity;
-    this.moonLight.visible =
-      environment.celestial.moonDirectMask > 0.01 && environment.moonIntensity > 0.001;
     this.ambientLight.color.set(environment.skyZenithColor);
     this.ambientLight.groundColor.set(environment.fogColor);
     this.ambientLight.intensity = environment.ambientIntensity * 0.35 + flash * 0.5;

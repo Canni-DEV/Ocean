@@ -243,6 +243,20 @@ export class EngineApp {
 
       window.addEventListener("resize", this.resize);
       this.resize();
+      // Seal sun+moon sticky membership (+ boat/flashlight) before the first gameplay frame.
+      this.atmosphere.warmUpCelestialLights();
+      const warmWeather = this.applyDebugWeatherOverrides(this.weatherCurrent);
+      const warmEnvironment = this.atmosphere.update({
+        renderer: this.renderer,
+        camera: this.input.camera,
+        deltaSeconds: 0,
+        weather: warmWeather,
+        worldTimeHours: this.worldTimeHours,
+        originOffsetMeters: this.originOffsetMeters,
+        timeSeconds: this.simulationTimeSeconds
+      });
+      this.renderer.toneMappingExposure = BASE_TONE_MAPPING_EXPOSURE * warmEnvironment.exposure;
+      this.renderer.render(this.scene, this.input.camera);
       this.status = "running";
       (window as any).__engine = this;
       this.loop();
