@@ -48,10 +48,13 @@ describe("InteractionSystem", () => {
     expect(layout.hitboxSize[1]).toBeLessThan(minimumRowSpacing);
   });
 
-  it("maps the four accessory controls to separated right-hand push-buttons", () => {
+  it("maps all five accessory controls to the original push-button bank", () => {
     const layout = COCKPIT_ACCESSORY_BANK_LAYOUT;
-    expect(layout.ids).toEqual(["anchorLight", "instrumentLights", "wipers", "bilgePump"]);
+    expect(layout.ids).toEqual([
+      "navigationLights", "anchorLight", "instrumentLights", "wipers", "bilgePump"
+    ]);
     expect(layout.buttonPositions).toHaveLength(layout.ids.length);
+    expect(layout.buttonPositions[0]).toEqual([-0.193097, 1.7089, 0.032272]);
     const minimumSpacing = Math.min(
       ...layout.buttonPositions.slice(1).map((position, index) =>
         position[0] - layout.buttonPositions[index][0]

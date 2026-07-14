@@ -54,12 +54,13 @@ export const COCKPIT_SWITCH_BANK_LAYOUT = {
 
 /** Calibrated against the five black push-buttons in the original GLB. */
 export const COCKPIT_ACCESSORY_BANK_LAYOUT = {
-  ids: ["anchorLight", "instrumentLights", "wipers", "bilgePump"] as const,
+  ids: ["navigationLights", "anchorLight", "instrumentLights", "wipers", "bilgePump"] as const,
   buttonPositions: [
-    [-0.098154, 1.7089, 0.0323],
-    [0, 1.7089, 0.0323],
-    [0.098154, 1.7089, 0.0323],
-    [0.1931, 1.7089, 0.0323]
+    [-0.193097, 1.7089, 0.032272],
+    [-0.098155, 1.7089, 0.032272],
+    [0, 1.7089, 0.032272],
+    [0.098155, 1.7089, 0.032272],
+    [0.193097, 1.7089, 0.032272]
   ] as const,
   // The original cylinders use local Y as their axis. In fitted model space
   // their outward axis points mostly upward, with a slight aft tilt.
@@ -189,7 +190,7 @@ const CONTROL_DEFINITIONS: ControlDefinition[] = [
   { id: "cabinLight", label: "Luz de cabina", panelLabel: "CABIN", clickLabel: "Encender / apagar", position: lowerSwitchPosition(1) },
   { id: "workLight", label: "Foco de proa", panelLabel: "PROA", clickLabel: "Encender / apagar", position: lowerSwitchPosition(2) },
   { id: "horn", label: "Bocina", panelLabel: "HORN", clickLabel: "Mantener pulsado", position: lowerSwitchPosition(3) },
-  { id: "navigationLights", label: "Luces de navegación", clickLabel: "Alternar", position: [-0.33, 1.7, -0.02] },
+  { id: "navigationLights", label: "Luces de navegación", clickLabel: "Alternar", position: accessorySwitchPosition("navigationLights") },
   { id: "anchorLight", label: "Luz de fondeo", clickLabel: "Alternar", position: accessorySwitchPosition("anchorLight") },
   { id: "instrumentLights", label: "Iluminación de instrumentos", clickLabel: "Alternar", position: accessorySwitchPosition("instrumentLights") },
   { id: "wipers", label: "Limpiaparabrisas", clickLabel: "Alternar", position: accessorySwitchPosition("wipers") },
