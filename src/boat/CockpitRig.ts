@@ -39,14 +39,18 @@ type ControlVisual = {
  * one measured layout instead of sixteen unrelated magic numbers.
  */
 export const COCKPIT_SWITCH_BANK_LAYOUT = {
-  switchX: -0.355,
+  switchX: -0.35416,
+  switchZ: 0.131923,
   labelX: -0.292,
   labelSize: [0.09, 0.026] as const,
   labelYOffset: 0.005,
   surfaceZ: 0.120,
-  rowY: [1.58028, 1.54186, 1.50388, 1.46788] as const,
+  rowY: [1.584007, 1.543054, 1.502101, 1.461148] as const,
   // Matches the visible brass push-button, not the complete switch row.
   hitboxSize: [0.026, 0.027, 0.04] as const,
+  hoverSize: [0.027, 0.027] as const,
+  hoverBorder: 0.0015,
+  hoverZ: 0.1332,
   indicatorX: -0.23059,
   indicatorZ: 0.1245,
   indicatorRadius: 0.0085
@@ -176,7 +180,7 @@ function lowerSwitchPosition(row: number): [number, number, number] {
   return [
     COCKPIT_SWITCH_BANK_LAYOUT.switchX,
     COCKPIT_SWITCH_BANK_LAYOUT.rowY[row] ?? COCKPIT_SWITCH_BANK_LAYOUT.rowY[0],
-    COCKPIT_SWITCH_BANK_LAYOUT.surfaceZ
+    COCKPIT_SWITCH_BANK_LAYOUT.switchZ
   ];
 }
 
@@ -536,13 +540,7 @@ export class CockpitRig {
             8,
             28
           ),
-          new THREE.MeshBasicMaterial({
-            color: 0xa9c8bb,
-            transparent: true,
-            opacity: 0,
-            depthWrite: false,
-            toneMapped: false
-          })
+          this.createHoverMaterial()
         );
         hoverRing.position.z = 0.008;
         hoverRing.userData.excludeFromCollider = true;
@@ -553,6 +551,13 @@ export class CockpitRig {
           definition.position[1],
           COCKPIT_SWITCH_BANK_LAYOUT.indicatorZ
         );
+        hoverRing = this.createLowerSwitchHoverOutline();
+        hoverRing.position.set(
+          COCKPIT_SWITCH_BANK_LAYOUT.switchX,
+          definition.position[1],
+          COCKPIT_SWITCH_BANK_LAYOUT.hoverZ
+        );
+        this.model.add(hoverRing);
       } else {
         indicator.position.copy(visual.position).add(new THREE.Vector3(0.065, 0, 0.025));
       }
@@ -568,6 +573,45 @@ export class CockpitRig {
         restPosition: visual.position.clone()
       });
     }
+  }
+
+  private createHoverMaterial(): THREE.MeshBasicMaterial {
+    return new THREE.MeshBasicMaterial({
+      color: 0xa9c8bb,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      toneMapped: false
+    });
+  }
+
+  private createLowerSwitchHoverOutline(): THREE.Mesh {
+    const [width, height] = COCKPIT_SWITCH_BANK_LAYOUT.hoverSize;
+    const border = COCKPIT_SWITCH_BANK_LAYOUT.hoverBorder;
+    const outerHalfWidth = width * 0.5;
+    const outerHalfHeight = height * 0.5;
+    const innerHalfWidth = outerHalfWidth - border;
+    const innerHalfHeight = outerHalfHeight - border;
+    const shape = new THREE.Shape();
+    shape.moveTo(-outerHalfWidth, -outerHalfHeight);
+    shape.lineTo(outerHalfWidth, -outerHalfHeight);
+    shape.lineTo(outerHalfWidth, outerHalfHeight);
+    shape.lineTo(-outerHalfWidth, outerHalfHeight);
+    shape.closePath();
+    const hole = new THREE.Path();
+    hole.moveTo(-innerHalfWidth, -innerHalfHeight);
+    hole.lineTo(-innerHalfWidth, innerHalfHeight);
+    hole.lineTo(innerHalfWidth, innerHalfHeight);
+    hole.lineTo(innerHalfWidth, -innerHalfHeight);
+    hole.closePath();
+    shape.holes.push(hole);
+    const outline = new THREE.Mesh(
+      new THREE.ShapeGeometry(shape),
+      this.createHoverMaterial()
+    );
+    outline.name = "Lower switch hover outline";
+    outline.userData.excludeFromCollider = true;
+    return outline;
   }
 
   private createRadioFrequencyIndicators(): void {

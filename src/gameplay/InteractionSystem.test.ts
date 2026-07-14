@@ -39,6 +39,8 @@ describe("InteractionSystem", () => {
     const layout = COCKPIT_SWITCH_BANK_LAYOUT;
     expect(layout.switchX).toBeGreaterThan(-0.3747);
     expect(layout.switchX).toBeLessThan(-0.33);
+    expect(layout.switchX).toBeCloseTo(-0.35416, 5);
+    expect(layout.switchZ).toBeCloseTo(0.131923, 6);
     expect(Math.min(...layout.rowY)).toBeGreaterThan(1.4406);
     expect(Math.max(...layout.rowY)).toBeLessThan(1.6046);
     expect(layout.indicatorX).toBeCloseTo(-0.2306, 3);
@@ -46,6 +48,9 @@ describe("InteractionSystem", () => {
       ...layout.rowY.slice(0, -1).map((row, index) => row - layout.rowY[index + 1])
     );
     expect(layout.hitboxSize[1]).toBeLessThan(minimumRowSpacing);
+    expect(layout.hoverSize[0]).toBeGreaterThan(0.018697);
+    expect(layout.hoverSize[1]).toBeGreaterThan(0.018697);
+    expect(layout.hoverBorder * 2).toBeLessThan(Math.min(...layout.hoverSize));
   });
 
   it("maps all five accessory controls to the original push-button bank", () => {
