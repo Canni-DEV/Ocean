@@ -15,6 +15,8 @@ export type FlashlightConfig = {
 
 export type FlashlightCue = "toggle" | "empty" | "charged";
 
+const SPILL_INTENSITY = 12;
+
 export class FlashlightBattery {
   private config: FlashlightConfig;
   private charge01 = 1;
@@ -114,15 +116,16 @@ export class FlashlightBattery {
 
 export class PlayerFlashlight {
   private readonly group = new THREE.Group();
-  private readonly spotlight = new THREE.SpotLight(0xffdfc4, 1100, 55, THREE.MathUtils.degToRad(16), 0.5, 2);
-  private readonly spill = new THREE.PointLight(0xffe5cc, 12, 4, 2);
+  // Intensity 0 when idle keeps lights in the WebGPU light set (avoids pipeline rebuilds on toggle / critical flicker).
+  private readonly spotlight = new THREE.SpotLight(0xffdfc4, 0, 55, THREE.MathUtils.degToRad(16), 0.5, 2);
+  private readonly spill = new THREE.PointLight(0xffe5cc, 0, 4, 2);
   private readonly target = new THREE.Object3D();
-  private readonly cookie: THREE.CanvasTexture;
   private readonly cameraPosition = new THREE.Vector3();
   private readonly cameraQuaternion = new THREE.Quaternion();
   private readonly battery: FlashlightBattery;
   private config: FlashlightConfig;
   private active = false;
+  private contributionFactor = 0;
   private quality: QualityTier | null = null;
 
   constructor(scene: THREE.Scene, config: FlashlightConfig, quality: QualityTier) {
@@ -135,19 +138,20 @@ export class PlayerFlashlight {
     this.spotlight.target = this.target;
     this.spotlight.position.set(0.035, -0.025, -0.04);
     this.spill.position.set(0, -0.04, -0.12);
-    this.cookie = createFlashlightCookie();
-    this.spotlight.map = this.cookie;
+    // No spotlight.map cookie: WebGPU SpotLightNode keeps unmodulated light outside the
+    // projected UV square, which draws a bright screen-aligned rectangle. Cone + penumbra only.
+    this.spotlight.map = null;
+    this.group.visible = true;
     this.group.add(this.spotlight, this.spill, this.target);
     scene.add(this.group);
     this.applyConfig(config);
     this.setQuality(quality);
-    this.syncVisibility(0);
+    this.syncLightContribution(0);
   }
 
   applyConfig(config: FlashlightConfig): void {
     this.config = normalizeConfig(config);
     this.battery.applyConfig(this.config);
-    this.spotlight.intensity = this.config.intensityCd;
     this.spotlight.distance = this.config.rangeM;
     this.spotlight.angle = THREE.MathUtils.degToRad(this.config.halfAngleDeg);
     this.spotlight.penumbra = this.config.penumbra;
@@ -157,11 +161,13 @@ export class PlayerFlashlight {
     this.spotlight.shadow.bias = -0.00035;
     this.spotlight.shadow.normalBias = 0.025;
     this.spotlight.shadow.camera.updateProjectionMatrix();
+    this.applyContributionIntensities();
   }
 
   setQuality(quality: QualityTier): void {
     if (quality === this.quality) return;
     this.quality = quality;
+    // Keep castShadow stable for the tier so shadow membership is compiled at load / quality change, not on first F.
     this.spotlight.castShadow = quality !== "low";
     const mapSize = quality === "high" ? 2048 : 1024;
     this.spotlight.shadow.mapSize.set(mapSize, mapSize);
@@ -191,7 +197,7 @@ export class PlayerFlashlight {
     this.group.position.copy(this.cameraPosition);
     this.group.quaternion.copy(this.cameraQuaternion);
     this.group.updateMatrixWorld(true);
-    this.syncVisibility(this.battery.getIntensityFactor());
+    this.syncLightContribution(this.battery.getIntensityFactor());
   }
 
   getState(): FlashlightState {
@@ -203,16 +209,18 @@ export class PlayerFlashlight {
   }
 
   dispose(): void {
-    this.cookie.dispose();
     this.spotlight.shadow.map?.dispose();
     this.group.removeFromParent();
   }
 
-  private syncVisibility(intensityFactor: number): void {
-    const visible = this.active && intensityFactor > 0;
-    this.group.visible = visible;
-    this.spotlight.intensity = visible ? this.config.intensityCd * intensityFactor : 0;
-    this.spill.intensity = visible ? 12 * intensityFactor : 0;
+  private syncLightContribution(intensityFactor: number): void {
+    this.contributionFactor = this.active ? intensityFactor : 0;
+    this.applyContributionIntensities();
+  }
+
+  private applyContributionIntensities(): void {
+    this.spotlight.intensity = this.config.intensityCd * this.contributionFactor;
+    this.spill.intensity = SPILL_INTENSITY * this.contributionFactor;
   }
 }
 
@@ -231,28 +239,3 @@ function normalizeConfig(config: FlashlightConfig): FlashlightConfig {
   };
 }
 
-function createFlashlightCookie(): THREE.CanvasTexture {
-  const canvas = document.createElement("canvas");
-  canvas.width = 128;
-  canvas.height = 128;
-  const context = canvas.getContext("2d");
-  if (context) {
-    const gradient = context.createRadialGradient(64, 62, 5, 64, 64, 63);
-    gradient.addColorStop(0, "rgba(255,248,232,1)");
-    gradient.addColorStop(0.56, "rgba(255,241,218,0.96)");
-    gradient.addColorStop(0.82, "rgba(220,205,180,0.72)");
-    gradient.addColorStop(1, "rgba(0,0,0,0)");
-    context.fillStyle = gradient;
-    context.fillRect(0, 0, 128, 128);
-    context.globalCompositeOperation = "multiply";
-    context.fillStyle = "rgba(230,220,205,0.12)";
-    context.beginPath();
-    context.ellipse(48, 72, 25, 10, -0.25, 0, Math.PI * 2);
-    context.fill();
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.generateMipmaps = true;
-  texture.needsUpdate = true;
-  return texture;
-}

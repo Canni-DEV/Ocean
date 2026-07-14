@@ -232,6 +232,10 @@ export class EngineApp {
       this.createOcean(this.settings.quality);
       this.atmosphere.applySettings(this.settings);
       this.ocean?.applySettings(this.settings);
+      // Boat work spots + player flashlight are already in the scene graph at intensity 0
+      // so the first WebGPU light pipelines compile here, not on the first switch / F press.
+      this.systems.state.workLight = this.settings.boatLightsOn;
+      this.boatVisual.setLightsOn(this.settings.boatLightsOn);
       this.scene.add(this.boatVisual.group);
       this.scene.add(this.fishingRopeSystem.group);
       this.resetBoat();

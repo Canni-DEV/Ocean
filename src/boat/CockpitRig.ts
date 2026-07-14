@@ -244,6 +244,7 @@ export class CockpitRig {
   private readonly wiperPivot = new THREE.Group();
   private readonly wetGlass: THREE.Mesh;
   private readonly bilgeWater: THREE.Mesh;
+  // Idle intensity 0 keeps lights in the WebGPU set (same pattern as LightningSystem).
   private readonly cabinLight = new THREE.PointLight(0xffe7ba, 0, 4.5, 1.8);
   private readonly navPort = new THREE.PointLight(0xff2038, 0, 5, 2);
   private readonly navStarboard = new THREE.PointLight(0x35ff89, 0, 5, 2);
@@ -973,6 +974,7 @@ export class CockpitRig {
   }
 
   private createLightsAndEffects(): void {
+    // Persistent PointLights (intensity 0 when idle) avoid WebGPU pipeline rebuilds on toggle.
     this.cabinLight.position.set(0, 2.35, 0.45);
     this.navPort.position.set(-1.65, 1.55, -1.6);
     this.navStarboard.position.set(1.65, 1.55, -1.6);
