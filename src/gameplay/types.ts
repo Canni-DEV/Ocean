@@ -44,12 +44,7 @@ export type CockpitControlId =
   | "wipers"
   | "bilgePump"
   | "radioPowerVolume"
-  | "radioTuning"
-  | "radioPreset1"
-  | "radioPreset2"
-  | "radioPreset3"
-  | "radioPreset4"
-  | "radioPreset5";
+  | "radioTuning";
 
 export type InteractionTarget = {
   id: CockpitControlId;

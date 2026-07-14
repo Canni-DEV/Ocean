@@ -51,6 +51,16 @@ describe("BoatSystems", () => {
     expect(systems.state.radio.station).toBe(2);
   });
 
+  it("cycles radio tuning through all six stations in both directions", () => {
+    const systems = new BoatSystems();
+    for (let index = 0; index < 5; index += 1) systems.adjust("radioTuning", 1);
+    expect(systems.state.radio.station).toBe(6);
+    systems.adjust("radioTuning", 1);
+    expect(systems.state.radio.station).toBe(1);
+    systems.adjust("radioTuning", -1);
+    expect(systems.state.radio.station).toBe(6);
+  });
+
   it("fills and pumps the bilge without leaving normalized bounds", () => {
     const systems = new BoatSystems();
     systems.update(1000, 0, metrics, 1);

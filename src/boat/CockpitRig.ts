@@ -5,6 +5,7 @@ import type {
   InteractionTarget,
   StationId
 } from "../gameplay/types";
+import { RADIO_STATION_COUNT } from "./radioConfig";
 
 export type CockpitHit = { kind: "control"; target: InteractionTarget };
 
@@ -82,6 +83,22 @@ export const COCKPIT_RADIO_KNOB_LAYOUT = {
   pressDurationS: 0.12
 } as const;
 
+/** Calibrated against the six small circles along the bottom of Cube.017. */
+export const COCKPIT_RADIO_FREQUENCY_LAYOUT = {
+  positions: [
+    [-0.078425, 1.871087, -0.283],
+    [-0.047413, 1.871087, -0.283],
+    [-0.016761, 1.871087, -0.283],
+    [0.016761, 1.871087, -0.283],
+    [0.047413, 1.871087, -0.283],
+    [0.078425, 1.871087, -0.283]
+  ] as const,
+  stationCount: RADIO_STATION_COUNT,
+  indicatorRadius: 0.0052,
+  activeColor: 0x36d982,
+  activeIntensity: 2.2
+} as const;
+
 const ACCESSORY_SWITCH_IDS = new Set<CockpitControlId>(COCKPIT_ACCESSORY_BANK_LAYOUT.ids);
 const ACCESSORY_SURFACE_NORMAL = new THREE.Vector3(
   ...COCKPIT_ACCESSORY_BANK_LAYOUT.surfaceNormal
@@ -145,11 +162,6 @@ const CONTROL_DEFINITIONS: ControlDefinition[] = [
   { id: "bilgePump", label: "Bomba de achique", clickLabel: "Alternar", position: accessorySwitchPosition("bilgePump") },
   { id: "radioPowerVolume", label: "Radio / volumen", clickLabel: "Click: encender", wheelLabel: "Rueda: volumen", position: radioKnobPosition("radioPowerVolume") },
   { id: "radioTuning", label: "Sintonía", clickLabel: "", wheelLabel: "Rueda: emisora", position: radioKnobPosition("radioTuning") },
-  { id: "radioPreset1", label: "Memoria 1", clickLabel: "Seleccionar", position: [-0.12, 1.82, -0.18] },
-  { id: "radioPreset2", label: "Memoria 2", clickLabel: "Seleccionar", position: [-0.06, 1.82, -0.18] },
-  { id: "radioPreset3", label: "Memoria 3", clickLabel: "Seleccionar", position: [0, 1.82, -0.18] },
-  { id: "radioPreset4", label: "Memoria 4", clickLabel: "Seleccionar", position: [0.06, 1.82, -0.18] },
-  { id: "radioPreset5", label: "Memoria 5", clickLabel: "Seleccionar", position: [0.12, 1.82, -0.18] }
 ];
 
 export class CockpitRig {
@@ -159,6 +171,7 @@ export class CockpitRig {
   private readonly stationSockets = new Map<StationId, THREE.Object3D>();
   private readonly stationZones: StationZoneDescriptor[] = [];
   private readonly needles: THREE.Object3D[] = [];
+  private readonly radioFrequencyIndicators: THREE.Mesh[] = [];
   private readonly instrumentDialMaterial = new THREE.MeshStandardMaterial({
     color: 0x101b25,
     emissive: 0x2a1303,
@@ -189,6 +202,7 @@ export class CockpitRig {
     this.wetGlass = this.createWetGlass();
     this.bilgeWater = this.createBilgeWater();
     this.createControls();
+    this.createRadioFrequencyIndicators();
     this.createStations();
     this.createInstruments();
     this.createLightsAndEffects();
@@ -259,11 +273,6 @@ export class CockpitRig {
         case "bilgePump": return state.bilgePump;
         case "radioPowerVolume": return state.radio.powered;
         case "radioTuning": return state.radio.powered;
-        case "radioPreset1": return state.radio.station === 1;
-        case "radioPreset2": return state.radio.station === 2;
-        case "radioPreset3": return state.radio.station === 3;
-        case "radioPreset4": return state.radio.station === 4;
-        case "radioPreset5": return state.radio.station === 5;
         default: return false;
       }
     };
@@ -305,6 +314,15 @@ export class CockpitRig {
       }
     }
 
+    this.radioFrequencyIndicators.forEach((indicator, index) => {
+      const material = indicator.material as THREE.MeshStandardMaterial;
+      const targetIntensity = state.radio.powered && state.radio.station === index + 1
+        ? COCKPIT_RADIO_FREQUENCY_LAYOUT.activeIntensity
+        : 0;
+      material.emissiveIntensity +=
+        (targetIntensity - material.emissiveIntensity) * (1 - Math.exp(-deltaSeconds * 14));
+    });
+
     const instrumentTarget = state.instrumentLights ? 1 : 0;
     this.instrumentLightLevel +=
       (instrumentTarget - this.instrumentLightLevel) * (1 - Math.exp(-deltaSeconds * 8));
@@ -343,7 +361,6 @@ export class CockpitRig {
     const hitMaterial = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.001, depthWrite: false });
     for (const definition of CONTROL_DEFINITIONS) {
       const isRadioKnob = definition.id === "radioPowerVolume" || definition.id === "radioTuning";
-      const isPreset = definition.id.startsWith("radioPreset");
       const isLowerSwitch = LOWER_SWITCH_IDS.has(definition.id);
       const isAccessorySwitch = ACCESSORY_SWITCH_IDS.has(definition.id);
       const isIntegratedControl = isAccessorySwitch || isRadioKnob;
@@ -366,11 +383,7 @@ export class CockpitRig {
           isAccessorySwitch ? ACCESSORY_SURFACE_QUATERNION : RADIO_SURFACE_QUATERNION
         );
       } else {
-        const geometry = new THREE.BoxGeometry(
-          isPreset ? 0.045 : 0.085,
-          isPreset ? 0.025 : 0.045,
-          0.045
-        );
+        const geometry = new THREE.BoxGeometry(0.085, 0.045, 0.045);
         const visualMaterial = new THREE.MeshStandardMaterial({
           color: 0xd8dfdf,
           metalness: 0.18,
@@ -390,7 +403,7 @@ export class CockpitRig {
           ? new THREE.BoxGeometry(...COCKPIT_ACCESSORY_BANK_LAYOUT.hitboxSize)
           : isRadioKnob
             ? new THREE.BoxGeometry(...COCKPIT_RADIO_KNOB_LAYOUT.hitboxSize)
-            : new THREE.BoxGeometry(isPreset ? 0.06 : 0.11, isPreset ? 0.06 : 0.09, 0.1);
+            : new THREE.BoxGeometry(0.11, 0.09, 0.1);
       const hitbox = new THREE.Mesh(hitboxGeometry, hitMaterial);
       hitbox.position.set(...definition.position);
       if (isIntegratedControl) {
@@ -405,60 +418,58 @@ export class CockpitRig {
 
       let indicator: THREE.Mesh | undefined;
       let hoverRing: THREE.Mesh | undefined;
-      if (!isPreset) {
-        const indicatorGeometry = isIntegratedControl
-          ? new THREE.SphereGeometry(
-              isAccessorySwitch
-                ? COCKPIT_ACCESSORY_BANK_LAYOUT.indicatorRadius
-                : COCKPIT_RADIO_KNOB_LAYOUT.indicatorRadius,
-              20,
-              12
-            )
-          : isLowerSwitch
+      const indicatorGeometry = isIntegratedControl
+        ? new THREE.SphereGeometry(
+            isAccessorySwitch
+              ? COCKPIT_ACCESSORY_BANK_LAYOUT.indicatorRadius
+              : COCKPIT_RADIO_KNOB_LAYOUT.indicatorRadius,
+            20,
+            12
+          )
+        : isLowerSwitch
           ? new THREE.CircleGeometry(COCKPIT_SWITCH_BANK_LAYOUT.indicatorRadius, 18)
           : new THREE.SphereGeometry(0.012, 10, 8);
-        indicator = new THREE.Mesh(
-          indicatorGeometry,
-          new THREE.MeshStandardMaterial({ color: 0x111713, emissive: 0x06120a, roughness: 0.5 })
+      indicator = new THREE.Mesh(
+        indicatorGeometry,
+        new THREE.MeshStandardMaterial({ color: 0x111713, emissive: 0x06120a, roughness: 0.5 })
+      );
+      if (isIntegratedControl) {
+        visual.add(indicator);
+        const hoverInnerRadius = isAccessorySwitch
+          ? COCKPIT_ACCESSORY_BANK_LAYOUT.hoverInnerRadius
+          : COCKPIT_RADIO_KNOB_LAYOUT.hoverInnerRadius;
+        const hoverOuterRadius = isAccessorySwitch
+          ? COCKPIT_ACCESSORY_BANK_LAYOUT.hoverOuterRadius
+          : COCKPIT_RADIO_KNOB_LAYOUT.hoverOuterRadius;
+        hoverRing = new THREE.Mesh(
+          new THREE.TorusGeometry(
+            (hoverInnerRadius + hoverOuterRadius) / 2,
+            (hoverOuterRadius - hoverInnerRadius) / 2,
+            8,
+            28
+          ),
+          new THREE.MeshBasicMaterial({
+            color: 0xa9c8bb,
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            toneMapped: false
+          })
         );
-        if (isIntegratedControl) {
-          visual.add(indicator);
-          const hoverInnerRadius = isAccessorySwitch
-            ? COCKPIT_ACCESSORY_BANK_LAYOUT.hoverInnerRadius
-            : COCKPIT_RADIO_KNOB_LAYOUT.hoverInnerRadius;
-          const hoverOuterRadius = isAccessorySwitch
-            ? COCKPIT_ACCESSORY_BANK_LAYOUT.hoverOuterRadius
-            : COCKPIT_RADIO_KNOB_LAYOUT.hoverOuterRadius;
-          hoverRing = new THREE.Mesh(
-            new THREE.TorusGeometry(
-              (hoverInnerRadius + hoverOuterRadius) / 2,
-              (hoverOuterRadius - hoverInnerRadius) / 2,
-              8,
-              28
-            ),
-            new THREE.MeshBasicMaterial({
-              color: 0xa9c8bb,
-              transparent: true,
-              opacity: 0,
-              depthWrite: false,
-              toneMapped: false
-            })
-          );
-          hoverRing.position.z = 0.008;
-          hoverRing.userData.excludeFromCollider = true;
-          visual.add(hoverRing);
-        } else if (isLowerSwitch) {
-          indicator.position.set(
-            COCKPIT_SWITCH_BANK_LAYOUT.indicatorX,
-            definition.position[1],
-            COCKPIT_SWITCH_BANK_LAYOUT.indicatorZ
-          );
-        } else {
-          indicator.position.copy(visual.position).add(new THREE.Vector3(0.065, 0, 0.025));
-        }
-        indicator.userData.excludeFromCollider = true;
-        if (!isIntegratedControl) this.model.add(indicator);
+        hoverRing.position.z = 0.008;
+        hoverRing.userData.excludeFromCollider = true;
+        visual.add(hoverRing);
+      } else if (isLowerSwitch) {
+        indicator.position.set(
+          COCKPIT_SWITCH_BANK_LAYOUT.indicatorX,
+          definition.position[1],
+          COCKPIT_SWITCH_BANK_LAYOUT.indicatorZ
+        );
+      } else {
+        indicator.position.copy(visual.position).add(new THREE.Vector3(0.065, 0, 0.025));
       }
+      indicator.userData.excludeFromCollider = true;
+      if (!isIntegratedControl) this.model.add(indicator);
       this.controls.set(definition.id, {
         hitbox,
         visual,
@@ -469,6 +480,28 @@ export class CockpitRig {
         restPosition: visual.position.clone()
       });
     }
+  }
+
+  private createRadioFrequencyIndicators(): void {
+    const geometry = new THREE.CircleGeometry(COCKPIT_RADIO_FREQUENCY_LAYOUT.indicatorRadius, 18);
+    COCKPIT_RADIO_FREQUENCY_LAYOUT.positions
+      .slice(0, COCKPIT_RADIO_FREQUENCY_LAYOUT.stationCount)
+      .forEach((position, index) => {
+        const indicator = new THREE.Mesh(
+          geometry,
+          new THREE.MeshStandardMaterial({
+            color: 0x08110c,
+            emissive: COCKPIT_RADIO_FREQUENCY_LAYOUT.activeColor,
+            emissiveIntensity: 0,
+            roughness: 0.45
+          })
+        );
+        indicator.name = `Radio frequency indicator ${index + 1}`;
+        indicator.position.set(position[0], position[1], position[2]);
+        indicator.userData.excludeFromCollider = true;
+        this.model.add(indicator);
+        this.radioFrequencyIndicators.push(indicator);
+      });
   }
 
   private createPanelLabel(text: string, y: number): THREE.Mesh {

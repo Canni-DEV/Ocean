@@ -1,14 +1,7 @@
 import * as THREE from "three/webgpu";
 import type { BoatSystemsState } from "../gameplay/types";
 import type { FlashlightCue } from "../player/PlayerFlashlight";
-
-const RADIO_PATHS = [
-  "/audio/radio/station-01.ogg",
-  "/audio/radio/station-02.ogg",
-  "/audio/radio/station-03.ogg",
-  "/audio/radio/station-04.ogg",
-  "/audio/radio/station-05.ogg"
-] as const;
+import { RADIO_STATION_PATHS } from "../boat/radioConfig";
 
 export class CabinAudio {
   private context: AudioContext | null = null;
@@ -204,7 +197,7 @@ export class CabinAudio {
     this.radioTrack = null;
     if (this.radioFallbackGain) this.radioFallbackGain.gain.value = 1;
     try {
-      const response = await fetch(RADIO_PATHS[station - 1]);
+      const response = await fetch(RADIO_STATION_PATHS[station - 1]);
       if (!response.ok) return;
       const buffer = await context.decodeAudioData(await response.arrayBuffer());
       if (token !== this.stationLoadToken || !this.radioGain) return;

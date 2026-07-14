@@ -1,6 +1,7 @@
 import * as THREE from "three/webgpu";
 import type { BoatPhysicsMetrics } from "./BoatPhysics";
 import type { BoatSystemsState, CockpitControlId } from "../gameplay/types";
+import { RADIO_STATION_COUNT } from "./radioConfig";
 
 const START_DURATION_S = 0.75;
 const FULL_LOAD_FUEL_SECONDS = 4 * 60 * 60;
@@ -80,11 +81,6 @@ export class BoatSystems {
       case "wipers": this.state.wipers = !this.state.wipers; return true;
       case "bilgePump": this.state.bilgePump = !this.state.bilgePump; return true;
       case "radioPowerVolume": this.state.radio.powered = !this.state.radio.powered; return true;
-      case "radioPreset1": this.state.radio.station = 1; return true;
-      case "radioPreset2": this.state.radio.station = 2; return true;
-      case "radioPreset3": this.state.radio.station = 3; return true;
-      case "radioPreset4": this.state.radio.station = 4; return true;
-      case "radioPreset5": this.state.radio.station = 5; return true;
       default: return false;
     }
   }
@@ -97,7 +93,9 @@ export class BoatSystems {
     }
     if (id === "radioTuning") {
       const direction = wheelSteps > 0 ? 1 : -1;
-      this.state.radio.station = ((this.state.radio.station - 1 + direction + 5) % 5) + 1;
+      this.state.radio.station = (
+        (this.state.radio.station - 1 + direction + RADIO_STATION_COUNT) % RADIO_STATION_COUNT
+      ) + 1;
       return true;
     }
     return false;

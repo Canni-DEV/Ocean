@@ -4,6 +4,7 @@ import { MeshBVH } from "three-mesh-bvh";
 import { BoatSystems } from "../boat/BoatSystems";
 import {
   COCKPIT_ACCESSORY_BANK_LAYOUT,
+  COCKPIT_RADIO_FREQUENCY_LAYOUT,
   COCKPIT_RADIO_KNOB_LAYOUT,
   COCKPIT_SWITCH_BANK_LAYOUT,
   type CockpitRig
@@ -76,6 +77,20 @@ describe("InteractionSystem", () => {
     expect(Math.hypot(...layout.surfaceNormal)).toBeCloseTo(1, 5);
     expect(layout.indicatorRadius).toBeLessThan(layout.hoverInnerRadius);
     expect(layout.hoverInnerRadius).toBeLessThan(layout.hoverOuterRadius);
+  });
+
+  it("maps five passive station lights to the original radio frequency row", () => {
+    const layout = COCKPIT_RADIO_FREQUENCY_LAYOUT;
+    expect(layout.positions).toHaveLength(6);
+    expect(layout.stationCount).toBe(6);
+    expect(layout.stationCount).toBeLessThanOrEqual(layout.positions.length);
+    const activePositions = layout.positions.slice(0, layout.stationCount);
+    expect(new Set(activePositions.map((position) => position[1])).size).toBe(1);
+    expect(new Set(activePositions.map((position) => position[2])).size).toBe(1);
+    const minimumSpacing = Math.min(
+      ...activePositions.slice(1).map((position, index) => position[0] - activePositions[index][0])
+    );
+    expect(layout.indicatorRadius * 2).toBeLessThan(minimumSpacing);
   });
 
   it("activates a centered nearby control", () => {
