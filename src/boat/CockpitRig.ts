@@ -6,6 +6,13 @@ import type {
   StationId
 } from "../gameplay/types";
 import { RADIO_STATION_COUNT } from "./radioConfig";
+import {
+  gaugeValueToAngle,
+  headingToCompassAngle,
+  projectWorldTargetToHeadUpRadar,
+  smoothWrappedAngle,
+  type RadarProjection
+} from "./CockpitInstrumentMath";
 
 export type CockpitHit = { kind: "control"; target: InteractionTarget };
 
@@ -99,6 +106,25 @@ export const COCKPIT_RADIO_FREQUENCY_LAYOUT = {
   activeIntensity: 2.2
 } as const;
 
+/** Measured from the six original circular recesses in Cylinder.022. */
+export const COCKPIT_INSTRUMENT_LAYOUT = {
+  surfaceNormal: [0, 1, 0] as const,
+  layerSpacing: 0.0012,
+  gaugeRadius: 0.0315,
+  lowerRadius: 0.041,
+  gauges: [
+    { key: "rpm", label: "RPM", minimum: 0, maximum: 3000, scaleMinimum: "0", scaleMaximum: "3000", position: [-0.176157, 1.819, -0.223463] },
+    { key: "speedKnots", label: "KN", minimum: 0, maximum: 40, scaleMinimum: "0", scaleMaximum: "40", position: [-0.058104, 1.819, -0.223463] },
+    { key: "fuel", label: "FUEL", minimum: 0, maximum: 1, scaleMinimum: "0", scaleMaximum: "100", position: [0.058104, 1.819, -0.223463] },
+    { key: "engineTemperatureC", label: "°C", minimum: 20, maximum: 120, scaleMinimum: "20", scaleMaximum: "120", position: [0.176157, 1.819, -0.223463] }
+  ] as const,
+  compassPosition: [-0.116368, 1.784, -0.119977] as const,
+  radarPosition: [0.116368, 1.784, -0.119977] as const,
+  radarRangeMeters: 500,
+  radarSweepRpm: 24,
+  radarPlotRadiusRatio: 0.76
+} as const;
+
 const ACCESSORY_SWITCH_IDS = new Set<CockpitControlId>(COCKPIT_ACCESSORY_BANK_LAYOUT.ids);
 const ACCESSORY_SURFACE_NORMAL = new THREE.Vector3(
   ...COCKPIT_ACCESSORY_BANK_LAYOUT.surfaceNormal
@@ -112,6 +138,10 @@ const RADIO_SURFACE_NORMAL = new THREE.Vector3(...COCKPIT_RADIO_KNOB_LAYOUT.surf
 const RADIO_SURFACE_QUATERNION = new THREE.Quaternion().setFromUnitVectors(
   new THREE.Vector3(0, 0, 1),
   RADIO_SURFACE_NORMAL
+);
+const INSTRUMENT_SURFACE_QUATERNION = new THREE.Quaternion().setFromUnitVectors(
+  new THREE.Vector3(0, 0, 1),
+  new THREE.Vector3(...COCKPIT_INSTRUMENT_LAYOUT.surfaceNormal)
 );
 
 function accessorySwitchPosition(id: CockpitControlId): [number, number, number] {
@@ -170,15 +200,32 @@ export class CockpitRig {
   private readonly controls = new Map<CockpitControlId, ControlVisual>();
   private readonly stationSockets = new Map<StationId, THREE.Object3D>();
   private readonly stationZones: StationZoneDescriptor[] = [];
-  private readonly needles: THREE.Object3D[] = [];
-  private readonly radioFrequencyIndicators: THREE.Mesh[] = [];
-  private readonly instrumentDialMaterial = new THREE.MeshStandardMaterial({
-    color: 0x101b25,
-    emissive: 0x2a1303,
-    emissiveIntensity: 0,
-    metalness: 0.35,
-    roughness: 0.3
+  private readonly gaugeNeedles: THREE.Object3D[] = [];
+  private readonly ownedTextures: THREE.Texture[] = [];
+  private readonly amberFaceMaterials: THREE.MeshStandardMaterial[] = [];
+  private readonly compassCard = new THREE.Group();
+  private readonly radarSweepPivot = new THREE.Group();
+  private readonly radarProjection: RadarProjection = { x: 0, y: 0, distance: 0, visible: false };
+  private readonly radarBlipMaterial = new THREE.MeshBasicMaterial({
+    color: 0x44f2a1,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    toneMapped: false
   });
+  private readonly radarSweepMaterial = new THREE.MeshBasicMaterial({
+    color: 0x45d890,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    toneMapped: false
+  });
+  private readonly radarBlip = new THREE.Mesh(
+    new THREE.CircleGeometry(0.0035, 16),
+    this.radarBlipMaterial
+  );
+  private radarFaceMaterial: THREE.MeshStandardMaterial | null = null;
+  private readonly radioFrequencyIndicators: THREE.Mesh[] = [];
   private readonly instrumentNeedleMaterial = new THREE.MeshStandardMaterial({
     color: 0x9d3821,
     emissive: 0xff8a3d,
@@ -196,6 +243,7 @@ export class CockpitRig {
   private highlightedControl: CockpitControlId | null = null;
   private wiperPhase = 0;
   private instrumentLightLevel = 0;
+  private compassRotationRad = 0;
 
   private constructor(model: THREE.Object3D) {
     this.model = model;
@@ -210,6 +258,11 @@ export class CockpitRig {
 
   static bind(model: THREE.Object3D): CockpitRig {
     return new CockpitRig(model);
+  }
+
+  dispose(): void {
+    this.ownedTextures.forEach((texture) => texture.dispose());
+    this.ownedTextures.length = 0;
   }
 
   getControlRaycastObjects(): THREE.Object3D[] {
@@ -326,22 +379,52 @@ export class CockpitRig {
     const instrumentTarget = state.instrumentLights ? 1 : 0;
     this.instrumentLightLevel +=
       (instrumentTarget - this.instrumentLightLevel) * (1 - Math.exp(-deltaSeconds * 8));
-    this.instrumentDialMaterial.emissiveIntensity = this.instrumentLightLevel * 1.85;
+    this.amberFaceMaterials.forEach((material) => {
+      material.emissiveIntensity = this.instrumentLightLevel * 2.1;
+    });
+    if (this.radarFaceMaterial) {
+      this.radarFaceMaterial.emissiveIntensity = this.instrumentLightLevel * 2.25;
+      this.radarFaceMaterial.color.setScalar(0.04 + this.instrumentLightLevel * 0.58);
+    }
     this.instrumentNeedleMaterial.emissiveIntensity = 0.08 + this.instrumentLightLevel * 2.8;
 
     const readings = state.instruments;
-    const values = [
-      readings.rpm / 2800,
-      readings.speedKnots / 35,
-      readings.fuel,
-      (readings.engineTemperatureC - 20) / 90,
-      (readings.voltage - 10) / 6,
-      readings.headingDeg / 360
-    ];
-    this.needles.forEach((needle, index) => {
-      const target = THREE.MathUtils.lerp(-2.25, 2.25, THREE.MathUtils.clamp(values[index] ?? 0, 0, 1));
-      needle.rotation.z += (target - needle.rotation.z) * (1 - Math.exp(-deltaSeconds * 8));
-    });
+    this.updateGaugeNeedle(0, readings.rpm, deltaSeconds);
+    this.updateGaugeNeedle(1, readings.speedKnots, deltaSeconds);
+    this.updateGaugeNeedle(2, readings.fuel, deltaSeconds);
+    this.updateGaugeNeedle(3, readings.engineTemperatureC, deltaSeconds);
+
+    const compassTarget = headingToCompassAngle(state.navigation.headingDeg);
+    this.compassRotationRad = smoothWrappedAngle(
+      this.compassRotationRad,
+      compassTarget,
+      1 - Math.exp(-deltaSeconds * 8)
+    );
+    this.compassCard.rotation.z = this.compassRotationRad;
+
+    if (state.instrumentLights) {
+      this.radarSweepPivot.rotation.z -= deltaSeconds * COCKPIT_INSTRUMENT_LAYOUT.radarSweepRpm
+        * Math.PI * 2 / 60;
+    }
+    this.radarSweepMaterial.opacity = this.instrumentLightLevel * 0.55;
+    this.radarBlipMaterial.opacity = this.instrumentLightLevel * 0.95;
+    projectWorldTargetToHeadUpRadar(
+      state.navigation.worldX,
+      state.navigation.worldZ,
+      state.navigation.headingDeg,
+      0,
+      0,
+      COCKPIT_INSTRUMENT_LAYOUT.radarRangeMeters,
+      this.radarProjection
+    );
+    const radarPlotRadius = COCKPIT_INSTRUMENT_LAYOUT.lowerRadius
+      * COCKPIT_INSTRUMENT_LAYOUT.radarPlotRadiusRatio;
+    this.radarBlip.position.set(
+      this.radarProjection.x * radarPlotRadius,
+      this.radarProjection.y * radarPlotRadius,
+      COCKPIT_INSTRUMENT_LAYOUT.layerSpacing * 4
+    );
+    this.radarBlip.visible = this.instrumentLightLevel > 0.01 && this.radarProjection.visible;
 
     if (state.wipers) this.wiperPhase += deltaSeconds * 4.4;
     this.wiperPivot.rotation.z = state.wipers ? Math.sin(this.wiperPhase) * 0.72 : 0;
@@ -524,6 +607,7 @@ export class CockpitRig {
     texture.magFilter = THREE.LinearFilter;
     texture.anisotropy = 8;
     texture.needsUpdate = true;
+    this.ownedTextures.push(texture);
     const material = new THREE.MeshBasicMaterial({
       map: texture,
       transparent: true,
@@ -572,29 +656,269 @@ export class CockpitRig {
   }
 
   private createInstruments(): void {
-    const positions: Array<[number, number, number]> = [
-      [-0.32, 1.76, -0.09], [-0.16, 1.78, -0.11], [0, 1.79, -0.12],
-      [0.16, 1.78, -0.11], [-0.24, 1.65, -0.02], [0.2, 1.65, -0.02]
-    ];
-    for (const position of positions) {
-      const dial = new THREE.Mesh(
-        new THREE.CircleGeometry(0.07, 24),
-        this.instrumentDialMaterial
+    for (const gauge of COCKPIT_INSTRUMENT_LAYOUT.gauges) {
+      const root = this.createInstrumentRoot(gauge.position, `Cockpit gauge ${gauge.key}`);
+      const texture = this.createGaugeTexture(
+        gauge.label,
+        gauge.scaleMinimum,
+        gauge.scaleMaximum
       );
-      dial.position.set(...position);
-      dial.rotation.x = -0.16;
-      dial.userData.excludeFromCollider = true;
-      this.model.add(dial);
-      const needle = new THREE.Mesh(
-        new THREE.BoxGeometry(0.006, 0.052, 0.006),
-        this.instrumentNeedleMaterial
-      );
-      needle.position.copy(dial.position).add(new THREE.Vector3(0, 0.025, 0.006));
-      needle.rotation.x = dial.rotation.x;
-      needle.userData.excludeFromCollider = true;
-      this.model.add(needle);
-      this.needles.push(needle);
+      const material = this.createInstrumentFaceMaterial(texture, 0xff9a45);
+      this.amberFaceMaterials.push(material);
+      root.add(new THREE.Mesh(
+        new THREE.CircleGeometry(COCKPIT_INSTRUMENT_LAYOUT.gaugeRadius, 48),
+        material
+      ));
+
+      const needle = this.createNeedle(COCKPIT_INSTRUMENT_LAYOUT.gaugeRadius);
+      needle.rotation.z = gaugeValueToAngle(gauge.minimum, gauge.minimum, gauge.maximum);
+      root.add(needle);
+      this.gaugeNeedles.push(needle);
     }
+
+    const compassRoot = this.createInstrumentRoot(
+      COCKPIT_INSTRUMENT_LAYOUT.compassPosition,
+      "Marine compass"
+    );
+    const compassTexture = this.createCompassTexture();
+    const compassMaterial = this.createInstrumentFaceMaterial(compassTexture, 0xff9a45);
+    this.amberFaceMaterials.push(compassMaterial);
+    const compassFace = new THREE.Mesh(
+      new THREE.CircleGeometry(COCKPIT_INSTRUMENT_LAYOUT.lowerRadius, 64),
+      compassMaterial
+    );
+    this.compassCard.name = "Rotating true-north compass card";
+    this.compassCard.add(compassFace);
+    compassRoot.add(this.compassCard);
+
+    const lubberLine = new THREE.Mesh(
+      new THREE.BoxGeometry(0.0024, COCKPIT_INSTRUMENT_LAYOUT.lowerRadius * 0.2, 0.001),
+      this.instrumentNeedleMaterial
+    );
+    lubberLine.name = "Compass fixed lubber line";
+    lubberLine.position.set(
+      0,
+      COCKPIT_INSTRUMENT_LAYOUT.lowerRadius * 0.76,
+      COCKPIT_INSTRUMENT_LAYOUT.layerSpacing * 3
+    );
+    compassRoot.add(lubberLine);
+
+    const radarRoot = this.createInstrumentRoot(
+      COCKPIT_INSTRUMENT_LAYOUT.radarPosition,
+      "Head-up test radar"
+    );
+    const radarTexture = this.createRadarTexture();
+    this.radarFaceMaterial = this.createInstrumentFaceMaterial(radarTexture, 0x35d889);
+    const radarFace = new THREE.Mesh(
+      new THREE.CircleGeometry(COCKPIT_INSTRUMENT_LAYOUT.lowerRadius, 64),
+      this.radarFaceMaterial
+    );
+    radarRoot.add(radarFace);
+
+    const sweepLength = COCKPIT_INSTRUMENT_LAYOUT.lowerRadius
+      * COCKPIT_INSTRUMENT_LAYOUT.radarPlotRadiusRatio;
+    const sweep = new THREE.Mesh(
+      new THREE.BoxGeometry(0.0014, sweepLength, 0.0008),
+      this.radarSweepMaterial
+    );
+    sweep.position.set(0, sweepLength * 0.5, COCKPIT_INSTRUMENT_LAYOUT.layerSpacing * 3);
+    this.radarSweepPivot.name = "Radar 24 rpm sweep";
+    this.radarSweepPivot.add(sweep);
+    radarRoot.add(this.radarSweepPivot);
+
+    this.radarBlip.name = "Radar world origin blip";
+    this.radarBlip.position.z = COCKPIT_INSTRUMENT_LAYOUT.layerSpacing * 4;
+    this.radarBlip.visible = false;
+    radarRoot.add(this.radarBlip);
+  }
+
+  private createInstrumentRoot(
+    position: readonly [number, number, number],
+    name: string
+  ): THREE.Group {
+    const root = new THREE.Group();
+    root.name = name;
+    root.position.set(position[0], position[1], position[2]);
+    root.quaternion.copy(INSTRUMENT_SURFACE_QUATERNION);
+    root.userData.excludeFromCollider = true;
+    this.model.add(root);
+    return root;
+  }
+
+  private createNeedle(radius: number): THREE.Group {
+    const pivot = new THREE.Group();
+    const length = radius * 0.68;
+    const needle = new THREE.Mesh(
+      new THREE.BoxGeometry(radius * 0.075, length, 0.001),
+      this.instrumentNeedleMaterial
+    );
+    needle.position.set(0, length * 0.5, COCKPIT_INSTRUMENT_LAYOUT.layerSpacing * 2);
+    const hub = new THREE.Mesh(
+      new THREE.CircleGeometry(radius * 0.105, 18),
+      this.instrumentNeedleMaterial
+    );
+    hub.position.z = COCKPIT_INSTRUMENT_LAYOUT.layerSpacing * 3;
+    pivot.add(needle, hub);
+    pivot.userData.excludeFromCollider = true;
+    return pivot;
+  }
+
+  private createInstrumentFaceMaterial(
+    texture: THREE.CanvasTexture,
+    emissiveColor: number
+  ): THREE.MeshStandardMaterial {
+    return new THREE.MeshStandardMaterial({
+      color: 0x8b8983,
+      map: texture,
+      emissive: emissiveColor,
+      emissiveMap: texture,
+      emissiveIntensity: 0,
+      metalness: 0.08,
+      roughness: 0.72,
+      polygonOffset: true,
+      polygonOffsetFactor: -1
+    });
+  }
+
+  private createGaugeTexture(
+    label: string,
+    scaleMinimum: string,
+    scaleMaximum: string
+  ): THREE.CanvasTexture {
+    return this.createInstrumentTexture((context, size) => {
+      const center = size / 2;
+      context.fillStyle = "#050807";
+      context.beginPath();
+      context.arc(center, center, center, 0, Math.PI * 2);
+      context.fill();
+      context.strokeStyle = "#765536";
+      context.lineCap = "round";
+      for (let index = 0; index <= 20; index += 1) {
+        const progress = index / 20;
+        const angle = 3 * Math.PI / 4 - progress * 3 * Math.PI / 2;
+        const major = index % 5 === 0;
+        const outer = size * 0.43;
+        const inner = size * (major ? 0.31 : 0.35);
+        const sin = Math.sin(angle);
+        const cos = Math.cos(angle);
+        context.lineWidth = major ? size * 0.018 : size * 0.009;
+        context.beginPath();
+        context.moveTo(center - sin * inner, center - cos * inner);
+        context.lineTo(center - sin * outer, center - cos * outer);
+        context.stroke();
+      }
+      context.fillStyle = "#9a6c42";
+      context.font = `700 ${Math.round(size * (label.length > 3 ? 0.105 : 0.125))}px Arial`;
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.fillText(label, center, size * 0.62);
+      context.font = `700 ${Math.round(size * 0.065)}px Arial`;
+      context.fillText(scaleMinimum, size * 0.26, size * 0.76);
+      context.fillText(scaleMaximum, size * 0.74, size * 0.76);
+    });
+  }
+
+  private createCompassTexture(): THREE.CanvasTexture {
+    return this.createInstrumentTexture((context, size) => {
+      const center = size / 2;
+      context.fillStyle = "#050807";
+      context.beginPath();
+      context.arc(center, center, center, 0, Math.PI * 2);
+      context.fill();
+      context.strokeStyle = "#765536";
+      context.fillStyle = "#a87343";
+      context.lineCap = "round";
+      for (let index = 0; index < 36; index += 1) {
+        const angle = index * Math.PI * 2 / 36;
+        const major = index % 9 === 0;
+        const outer = size * 0.44;
+        const inner = size * (major ? 0.32 : 0.38);
+        context.lineWidth = major ? size * 0.014 : size * 0.007;
+        context.beginPath();
+        context.moveTo(center + Math.sin(angle) * inner, center - Math.cos(angle) * inner);
+        context.lineTo(center + Math.sin(angle) * outer, center - Math.cos(angle) * outer);
+        context.stroke();
+      }
+      context.font = `800 ${Math.round(size * 0.13)}px Arial`;
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      const labelRadius = size * 0.265;
+      context.fillText("N", center, center - labelRadius);
+      context.fillText("E", center + labelRadius, center);
+      context.fillText("S", center, center + labelRadius);
+      context.fillText("O", center - labelRadius, center);
+      context.beginPath();
+      context.arc(center, center, size * 0.035, 0, Math.PI * 2);
+      context.fill();
+    });
+  }
+
+  private createRadarTexture(): THREE.CanvasTexture {
+    return this.createInstrumentTexture((context, size) => {
+      const center = size / 2;
+      const plotRadius = size * 0.5 * COCKPIT_INSTRUMENT_LAYOUT.radarPlotRadiusRatio;
+      context.fillStyle = "#020807";
+      context.beginPath();
+      context.arc(center, center, center, 0, Math.PI * 2);
+      context.fill();
+      context.strokeStyle = "#267955";
+      context.fillStyle = "#3d9f70";
+      context.lineWidth = size * 0.008;
+      for (const ratio of [0.5, 1]) {
+        context.beginPath();
+        context.arc(center, center, plotRadius * ratio, 0, Math.PI * 2);
+        context.stroke();
+      }
+      context.beginPath();
+      context.moveTo(center - plotRadius, center);
+      context.lineTo(center + plotRadius, center);
+      context.moveTo(center, center - plotRadius);
+      context.lineTo(center, center + plotRadius);
+      context.stroke();
+      context.font = `700 ${Math.round(size * 0.07)}px Arial`;
+      context.textAlign = "left";
+      context.textBaseline = "bottom";
+      context.fillText("500m", center + size * 0.04, center - plotRadius + size * 0.08);
+      context.font = `700 ${Math.round(size * 0.055)}px Arial`;
+      context.fillText("250", center + size * 0.025, center - plotRadius * 0.5 + size * 0.06);
+      context.beginPath();
+      context.moveTo(center, center - plotRadius - size * 0.035);
+      context.lineTo(center - size * 0.025, center - plotRadius + size * 0.02);
+      context.lineTo(center + size * 0.025, center - plotRadius + size * 0.02);
+      context.closePath();
+      context.fill();
+    });
+  }
+
+  private createInstrumentTexture(
+    draw: (context: CanvasRenderingContext2D, size: number) => void
+  ): THREE.CanvasTexture {
+    const canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 512;
+    const context = canvas.getContext("2d");
+    if (context) draw(context, canvas.width);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.generateMipmaps = false;
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.anisotropy = 8;
+    texture.needsUpdate = true;
+    this.ownedTextures.push(texture);
+    return texture;
+  }
+
+  private updateGaugeNeedle(
+    index: number,
+    value: number,
+    deltaSeconds: number
+  ): void {
+    const needle = this.gaugeNeedles[index];
+    const gauge = COCKPIT_INSTRUMENT_LAYOUT.gauges[index];
+    if (!needle || !gauge) return;
+    const target = gaugeValueToAngle(value, gauge.minimum, gauge.maximum);
+    needle.rotation.z += (target - needle.rotation.z) * (1 - Math.exp(-deltaSeconds * 8));
   }
 
   private createLightsAndEffects(): void {

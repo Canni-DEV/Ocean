@@ -4,6 +4,7 @@ import { MeshBVH } from "three-mesh-bvh";
 import { BoatSystems } from "../boat/BoatSystems";
 import {
   COCKPIT_ACCESSORY_BANK_LAYOUT,
+  COCKPIT_INSTRUMENT_LAYOUT,
   COCKPIT_RADIO_FREQUENCY_LAYOUT,
   COCKPIT_RADIO_KNOB_LAYOUT,
   COCKPIT_SWITCH_BANK_LAYOUT,
@@ -79,7 +80,7 @@ describe("InteractionSystem", () => {
     expect(layout.hoverInnerRadius).toBeLessThan(layout.hoverOuterRadius);
   });
 
-  it("maps five passive station lights to the original radio frequency row", () => {
+  it("maps six passive station lights to the original radio frequency row", () => {
     const layout = COCKPIT_RADIO_FREQUENCY_LAYOUT;
     expect(layout.positions).toHaveLength(6);
     expect(layout.stationCount).toBe(6);
@@ -91,6 +92,36 @@ describe("InteractionSystem", () => {
       ...activePositions.slice(1).map((position, index) => position[0] - activePositions[index][0])
     );
     expect(layout.indicatorRadius * 2).toBeLessThan(minimumSpacing);
+  });
+
+  it("fits four gauges, a compass and a radar into the original circular recesses", () => {
+    const layout = COCKPIT_INSTRUMENT_LAYOUT;
+    expect(layout.gauges.map((gauge) => gauge.key)).toEqual([
+      "rpm", "speedKnots", "fuel", "engineTemperatureC"
+    ]);
+    expect(layout.gauges.map((gauge) => [gauge.minimum, gauge.maximum])).toEqual([
+      [0, 3000], [0, 40], [0, 1], [20, 120]
+    ]);
+    expect(layout.gauges.map((gauge) => gauge.position)).toEqual([
+      [-0.176157, 1.819, -0.223463],
+      [-0.058104, 1.819, -0.223463],
+      [0.058104, 1.819, -0.223463],
+      [0.176157, 1.819, -0.223463]
+    ]);
+    expect(layout.surfaceNormal).toEqual([0, 1, 0]);
+    const minimumGaugeSpacing = Math.min(
+      ...layout.gauges.slice(1).map((gauge, index) =>
+        gauge.position[0] - layout.gauges[index].position[0]
+      )
+    );
+    expect(layout.gaugeRadius * 2).toBeLessThan(minimumGaugeSpacing);
+    expect(layout.compassPosition[0]).toBeLessThan(0);
+    expect(layout.radarPosition[0]).toBeGreaterThan(0);
+    expect(layout.compassPosition[1]).toBeCloseTo(layout.radarPosition[1], 6);
+    expect(layout.compassPosition[2]).toBeCloseTo(layout.radarPosition[2], 6);
+    expect(layout.lowerRadius).toBeGreaterThan(layout.gaugeRadius);
+    expect(layout.gaugeRadius).toBeLessThan(0.035);
+    expect(layout.lowerRadius).toBeLessThan(0.042);
   });
 
   it("activates a centered nearby control", () => {

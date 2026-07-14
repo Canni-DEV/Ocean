@@ -27,8 +27,8 @@ export class BoatSystems {
       fuel: 1,
       engineTemperatureC: 20,
       voltage: 12.4,
-      headingDeg: 0
-    }
+    },
+    navigation: { headingDeg: 0, worldX: 0, worldZ: 0 }
   };
 
   update(deltaSeconds: number, throttle: number, metrics: BoatPhysicsMetrics, precipitation: number): void {
@@ -51,7 +51,9 @@ export class BoatSystems {
     this.state.instruments.speedKnots = metrics.speedMs * 1.94384;
     this.state.instruments.fuel = this.state.fuel;
     this.state.instruments.voltage = running ? 14.2 : 12.4;
-    this.state.instruments.headingDeg = (metrics.headingDeg + 360) % 360;
+    this.state.navigation.headingDeg = (metrics.headingDeg + 360) % 360;
+    this.state.navigation.worldX = metrics.position.x;
+    this.state.navigation.worldZ = metrics.position.z;
 
     const rainIngress = THREE.MathUtils.clamp(precipitation, 0, 1) * 0.00045;
     const capsizeIngress = metrics.capsized ? 0.08 : 0;

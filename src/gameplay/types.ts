@@ -65,7 +65,12 @@ export type InstrumentReadings = {
   fuel: number;
   engineTemperatureC: number;
   voltage: number;
+};
+
+export type NavigationReadings = {
   headingDeg: number;
+  worldX: number;
+  worldZ: number;
 };
 
 export type BoatSystemsState = {
@@ -83,6 +88,7 @@ export type BoatSystemsState = {
   bilgeLevel: number;
   radio: RadioState;
   instruments: InstrumentReadings;
+  navigation: NavigationReadings;
 };
 
 export type GameplayUiState = {

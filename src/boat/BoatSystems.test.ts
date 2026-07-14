@@ -25,7 +25,7 @@ describe("BoatSystems", () => {
     systems.update(0.1, 0, metrics, 0);
     expect(systems.state.fuel).toBe(0);
     expect(systems.state.engine).toBe("off");
-    expect(systems.state.instruments.headingDeg).toBe(350);
+    expect(systems.state.navigation).toEqual({ headingDeg: 350, worldX: 0, worldZ: 0 });
     expect(systems.state.instruments.speedKnots).toBeGreaterThan(9);
   });
 
@@ -68,5 +68,15 @@ describe("BoatSystems", () => {
     systems.activate("bilgePump");
     systems.update(1000, 0, metrics, 0);
     expect(systems.state.bilgeLevel).toBe(0);
+  });
+
+  it("publishes absolute navigation readings for compass and radar", () => {
+    const systems = new BoatSystems();
+    systems.update(0.1, 0, {
+      ...metrics,
+      position: { x: 125, y: 0.4, z: -240 },
+      headingDeg: 90
+    }, 0);
+    expect(systems.state.navigation).toEqual({ headingDeg: 90, worldX: 125, worldZ: -240 });
   });
 });

@@ -125,6 +125,7 @@ export class BoatVisual {
   }
 
   dispose(): void {
+    this.cockpitRig?.dispose();
     this.group.traverse((object) => {
       const mesh = object as THREE.Mesh;
       if (mesh.isMesh) {
