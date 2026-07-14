@@ -108,18 +108,19 @@ export const COCKPIT_RADIO_FREQUENCY_LAYOUT = {
 
 /** Measured from the six original circular recesses in Cylinder.022. */
 export const COCKPIT_INSTRUMENT_LAYOUT = {
-  surfaceNormal: [0, 1, 0] as const,
-  layerSpacing: 0.0012,
+  surfaceNormal: [0, 0.93266, 0.360755] as const,
+  surfaceOffset: 0.0008,
+  layerSpacing: 0.0004,
   gaugeRadius: 0.0315,
   lowerRadius: 0.041,
   gauges: [
-    { key: "rpm", label: "RPM", minimum: 0, maximum: 3000, scaleMinimum: "0", scaleMaximum: "3000", position: [-0.176157, 1.819, -0.223463] },
-    { key: "speedKnots", label: "KN", minimum: 0, maximum: 40, scaleMinimum: "0", scaleMaximum: "40", position: [-0.058104, 1.819, -0.223463] },
-    { key: "fuel", label: "FUEL", minimum: 0, maximum: 1, scaleMinimum: "0", scaleMaximum: "100", position: [0.058104, 1.819, -0.223463] },
-    { key: "engineTemperatureC", label: "°C", minimum: 20, maximum: 120, scaleMinimum: "20", scaleMaximum: "120", position: [0.176157, 1.819, -0.223463] }
+    { key: "rpm", label: "RPM", minimum: 0, maximum: 3000, scaleMinimum: "0", scaleMaximum: "3000", position: [-0.176157, 1.801142, -0.221605] },
+    { key: "speedKnots", label: "KN", minimum: 0, maximum: 40, scaleMinimum: "0", scaleMaximum: "40", position: [-0.058104, 1.801142, -0.221605] },
+    { key: "fuel", label: "FUEL", minimum: 0, maximum: 1, scaleMinimum: "0", scaleMaximum: "100", position: [0.058104, 1.801142, -0.221605] },
+    { key: "engineTemperatureC", label: "°C", minimum: 20, maximum: 120, scaleMinimum: "20", scaleMaximum: "120", position: [0.176157, 1.801142, -0.221605] }
   ] as const,
-  compassPosition: [-0.116368, 1.784, -0.119977] as const,
-  radarPosition: [0.116368, 1.784, -0.119977] as const,
+  compassPosition: [-0.116368, 1.765495, -0.116792] as const,
+  radarPosition: [0.116368, 1.765495, -0.116792] as const,
   radarRangeMeters: 500,
   radarSweepRpm: 24,
   radarPlotRadiusRatio: 0.76
@@ -141,8 +142,11 @@ const RADIO_SURFACE_QUATERNION = new THREE.Quaternion().setFromUnitVectors(
 );
 const INSTRUMENT_SURFACE_QUATERNION = new THREE.Quaternion().setFromUnitVectors(
   new THREE.Vector3(0, 0, 1),
-  new THREE.Vector3(...COCKPIT_INSTRUMENT_LAYOUT.surfaceNormal)
+  new THREE.Vector3(...COCKPIT_INSTRUMENT_LAYOUT.surfaceNormal).normalize()
 );
+const INSTRUMENT_SURFACE_NORMAL = new THREE.Vector3(
+  ...COCKPIT_INSTRUMENT_LAYOUT.surfaceNormal
+).normalize();
 
 function accessorySwitchPosition(id: CockpitControlId): [number, number, number] {
   const index = COCKPIT_ACCESSORY_BANK_LAYOUT.ids.indexOf(
@@ -738,7 +742,9 @@ export class CockpitRig {
   ): THREE.Group {
     const root = new THREE.Group();
     root.name = name;
-    root.position.set(position[0], position[1], position[2]);
+    root.position
+      .set(position[0], position[1], position[2])
+      .addScaledVector(INSTRUMENT_SURFACE_NORMAL, COCKPIT_INSTRUMENT_LAYOUT.surfaceOffset);
     root.quaternion.copy(INSTRUMENT_SURFACE_QUATERNION);
     root.userData.excludeFromCollider = true;
     this.model.add(root);

@@ -103,12 +103,14 @@ describe("InteractionSystem", () => {
       [0, 3000], [0, 40], [0, 1], [20, 120]
     ]);
     expect(layout.gauges.map((gauge) => gauge.position)).toEqual([
-      [-0.176157, 1.819, -0.223463],
-      [-0.058104, 1.819, -0.223463],
-      [0.058104, 1.819, -0.223463],
-      [0.176157, 1.819, -0.223463]
+      [-0.176157, 1.801142, -0.221605],
+      [-0.058104, 1.801142, -0.221605],
+      [0.058104, 1.801142, -0.221605],
+      [0.176157, 1.801142, -0.221605]
     ]);
-    expect(layout.surfaceNormal).toEqual([0, 1, 0]);
+    expect(Math.hypot(...layout.surfaceNormal)).toBeCloseTo(1, 5);
+    expect(layout.surfaceNormal[1]).toBeCloseTo(0.93266, 5);
+    expect(layout.surfaceNormal[2]).toBeCloseTo(0.360755, 5);
     const minimumGaugeSpacing = Math.min(
       ...layout.gauges.slice(1).map((gauge, index) =>
         gauge.position[0] - layout.gauges[index].position[0]
@@ -119,6 +121,7 @@ describe("InteractionSystem", () => {
     expect(layout.radarPosition[0]).toBeGreaterThan(0);
     expect(layout.compassPosition[1]).toBeCloseTo(layout.radarPosition[1], 6);
     expect(layout.compassPosition[2]).toBeCloseTo(layout.radarPosition[2], 6);
+    expect(layout.compassPosition).toEqual([-0.116368, 1.765495, -0.116792]);
     expect(layout.lowerRadius).toBeGreaterThan(layout.gaugeRadius);
     expect(layout.gaugeRadius).toBeLessThan(0.035);
     expect(layout.lowerRadius).toBeLessThan(0.042);
