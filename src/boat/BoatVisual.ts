@@ -31,9 +31,8 @@ function isRemovedModelMesh(object: THREE.Object3D): boolean {
   return REMOVED_MODEL_MESH_NAMES.has(originalName);
 }
 
-/** Intensidades ON del foco; idle usa 0 para no reconstruir pipelines WebGPU. */
+/** Intensidad ON del foco de proa; idle usa 0 para no reconstruir pipelines WebGPU. */
 const FORWARD_SPOT_INTENSITY = 1200;
-const CABIN_SPOT_INTENSITY = 10;
 
 /** Visual del barco: carga el GLB definitivo al inicio y expone collider/rigs. */
 export class BoatVisual {
@@ -44,9 +43,7 @@ export class BoatVisual {
   private readonly lightGroup = new THREE.Group();
   // Intensity 0 when idle keeps SpotLights in the light set (avoids WebGPU pipeline rebuilds on toggle).
   private readonly spotlight = new THREE.SpotLight(0xfff0d0, 0, 1000, 1.1, 0.48, 1.35);
-  private readonly spotlightCabin = new THREE.SpotLight(0xfff0d0, 0, 300, 2.5, 0.48, 1.35);
   private readonly spotlightTarget = new THREE.Object3D();
-  private readonly spotlightCabinTarget = new THREE.Object3D();
   private modelReady = false;
   private lightsOn = false;
   private colliderGeometry: THREE.BufferGeometry | null = null;
@@ -237,7 +234,6 @@ export class BoatVisual {
 
   private syncLights(): void {
     this.spotlight.intensity = this.lightsOn ? FORWARD_SPOT_INTENSITY : 0;
-    this.spotlightCabin.intensity = this.lightsOn ? CABIN_SPOT_INTENSITY : 0;
   }
 
   private createSpotlight(): THREE.Group {
@@ -248,22 +244,10 @@ export class BoatVisual {
       -this.config.lengthMeters * 0.31
     );
 
-    const lightCabinPosition = new THREE.Vector3(
-      -this.config.beamMeters * 0.02,
-      this.config.hullHeightMeters * 1.25,
-      -this.config.lengthMeters * -0.175
-    );
-
     const targetPosition = new THREE.Vector3(
       -this.config.beamMeters * 0.02,
       this.config.hullHeightMeters * 0.3,
       -this.config.lengthMeters * 75
-    );
-
-    const targetPositionCabin = new THREE.Vector3(
-      -this.config.beamMeters * 0.02,
-      this.config.hullHeightMeters * 0.3,
-      -this.config.lengthMeters * -0.2
     );
 
     this.spotlight.name = "Boat forward spotlight";
@@ -274,15 +258,6 @@ export class BoatVisual {
     this.spotlightTarget.name = "Boat forward spotlight target";
     this.spotlightTarget.position.copy(targetPosition);
 
-    this.spotlightCabin.name = "Cabin forward1 spotlight";
-    this.spotlightCabin.position.copy(lightCabinPosition);
-    this.spotlightCabin.target = this.spotlightCabinTarget;
-    this.spotlightCabin.castShadow = false;
-
-    this.spotlightCabinTarget.name = "Cabin forward1 spotlight target";
-    this.spotlightCabinTarget.position.copy(targetPositionCabin);
-
-    lightMount.add(this.spotlightCabin, this.spotlightCabinTarget);
     lightMount.add(this.spotlight, this.spotlightTarget);
     return lightMount;
   }
