@@ -15,7 +15,7 @@ import type { InputActionSnapshot } from "./types";
 
 const frame = (primaryPressed = false): InputActionSnapshot => ({
   forward: 0, right: 0, vertical: 0, boost: false, interactPressed: false, flashlightPressed: false,
-  primaryPressed, primaryReleased: false, primaryDown: primaryPressed,
+  primaryPressed, primaryReleased: false, primaryDown: primaryPressed, secondaryDown: false,
   wheelSteps: 0, lookDeltaX: 0, lookDeltaY: 0, pointerLocked: true
 });
 

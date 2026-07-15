@@ -13,7 +13,12 @@
 {#if !hidden && state.mode !== "debugFreeCamera"}
   <div class="pointer-events-none absolute inset-0 z-20 select-none" aria-live="polite">
     {#if state.pointerLocked}
-      <div class:active={state.reticleActive} class="reticle" aria-hidden="true"></div>
+      <div
+        class:active={state.reticleActive}
+        class:zoomed={state.zoomActive}
+        class="reticle"
+        aria-hidden="true"
+      ></div>
     {/if}
 
     {#if modeLabel}
@@ -60,6 +65,18 @@
     height: 9px;
     border-color: #7dd3fc;
     box-shadow: 0 0 9px rgb(56 189 248 / 0.65);
+  }
+  .reticle.zoomed {
+    width: 3px;
+    height: 3px;
+    border-color: rgb(226 232 240 / 0.55);
+    box-shadow: 0 0 4px rgb(0 0 0 / 0.55);
+  }
+  .reticle.zoomed.active {
+    width: 6px;
+    height: 6px;
+    border-color: rgb(125 211 252 / 0.75);
+    box-shadow: 0 0 6px rgb(56 189 248 / 0.45);
   }
   .mode-badge {
     position: absolute;

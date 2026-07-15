@@ -12,6 +12,7 @@ export class GameplayInputRouter {
   private primaryPressed = false;
   private primaryReleased = false;
   private primaryDown = false;
+  private secondaryDown = false;
   private disposed = false;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -24,6 +25,7 @@ export class GameplayInputRouter {
     window.addEventListener("mousemove", this.onMouseMove);
     window.addEventListener("mouseup", this.onMouseUp);
     canvas.addEventListener("mousedown", this.onMouseDown);
+    canvas.addEventListener("contextmenu", this.onContextMenu);
     canvas.addEventListener("wheel", this.onWheel, { passive: false });
   }
 
@@ -49,6 +51,7 @@ export class GameplayInputRouter {
       primaryPressed: this.primaryPressed,
       primaryReleased: this.primaryReleased,
       primaryDown: this.primaryDown,
+      secondaryDown: pointerLocked && this.secondaryDown,
       wheelSteps: this.wheelSteps,
       lookDeltaX: this.lookDeltaX,
       lookDeltaY: this.lookDeltaY,
@@ -75,6 +78,7 @@ export class GameplayInputRouter {
     window.removeEventListener("mousemove", this.onMouseMove);
     window.removeEventListener("mouseup", this.onMouseUp);
     this.canvas.removeEventListener("mousedown", this.onMouseDown);
+    this.canvas.removeEventListener("contextmenu", this.onContextMenu);
     this.canvas.removeEventListener("wheel", this.onWheel);
   }
 
@@ -95,6 +99,11 @@ export class GameplayInputRouter {
   };
 
   private readonly onMouseDown = (event: MouseEvent): void => {
+    if (event.button === 2) {
+      if (document.pointerLockElement !== this.canvas) return;
+      this.secondaryDown = true;
+      return;
+    }
     if (event.button !== 0) return;
     if (document.pointerLockElement !== this.canvas) {
       void this.canvas.requestPointerLock();
@@ -105,9 +114,17 @@ export class GameplayInputRouter {
   };
 
   private readonly onMouseUp = (event: MouseEvent): void => {
+    if (event.button === 2) {
+      this.secondaryDown = false;
+      return;
+    }
     if (event.button !== 0) return;
     this.primaryDown = false;
     this.primaryReleased = true;
+  };
+
+  private readonly onContextMenu = (event: Event): void => {
+    event.preventDefault();
   };
 
   private readonly onWheel = (event: WheelEvent): void => {
@@ -128,6 +145,7 @@ export class GameplayInputRouter {
     this.keys.clear();
     this.primaryDown = false;
     this.primaryReleased = true;
+    this.secondaryDown = false;
     this.lookDeltaX = 0;
     this.lookDeltaY = 0;
   };

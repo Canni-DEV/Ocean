@@ -1,6 +1,7 @@
 import * as THREE from "three/webgpu";
 import { MeshBVH } from "three-mesh-bvh";
 import type { InputActionSnapshot } from "../gameplay/types";
+import { BASE_FOV } from "./CameraFovZoom";
 
 const WALK_SPEED_MS = 2.2;
 const EYE_HEIGHT_M = 1.3;
@@ -135,8 +136,10 @@ export class FirstPersonController {
     if (!this.enabled || deltaSeconds <= 0) return;
 
     if (input?.pointerLocked) {
-      this.yaw -= input.lookDeltaX * MOUSE_SENSITIVITY;
-      this.pitch = THREE.MathUtils.clamp(this.pitch - input.lookDeltaY * MOUSE_SENSITIVITY, PITCH_MIN, PITCH_MAX);
+      const lookScale = this.camera.fov / BASE_FOV;
+      const sensitivity = MOUSE_SENSITIVITY * lookScale;
+      this.yaw -= input.lookDeltaX * sensitivity;
+      this.pitch = THREE.MathUtils.clamp(this.pitch - input.lookDeltaY * sensitivity, PITCH_MIN, PITCH_MAX);
     }
 
     if (stationPosition) {

@@ -9,6 +9,7 @@ import { FishingRopeSystem } from "../fishing/FishingRopeSystem";
 import { OceanPhysicsSampler } from "../ocean/OceanPhysicsSampler";
 import { OceanRenderer } from "../ocean/OceanRenderer";
 import { BoatWaterInteraction } from "../ocean/BoatWaterInteraction";
+import { CameraFovZoom } from "../player/CameraFovZoom";
 import { FirstPersonController } from "../player/FirstPersonController";
 import { PlayerFlashlight, type FlashlightConfig } from "../player/PlayerFlashlight";
 import { OceanSimulation, OCEAN_QUALITY } from "../ocean/simulation/OceanSimulation";
@@ -48,6 +49,7 @@ export class EngineApp {
   private readonly boatVisual = new BoatVisual();
   private readonly fishingRopeSystem: FishingRopeSystem;
   private readonly firstPerson: FirstPersonController;
+  private readonly cameraFovZoom = new CameraFovZoom();
   private readonly sceneDepthPass = new SceneDepthPass();
   private readonly stats = new FrameStats();
   private readonly systems = new BoatSystems();
@@ -324,6 +326,11 @@ export class EngineApp {
     this.lastFrameMs = now;
     const statStart = this.stats.begin();
     const frameInput = this.gameplayInput.consumeFrame();
+    this.cameraFovZoom.update(
+      this.input.camera,
+      frameInput.secondaryDown && (frameInput.pointerLocked || this.gameplayMode === "debugFreeCamera"),
+      deltaSeconds
+    );
     let boatControl: BoatControlState | null = null;
     let fishingControl: FishingControlState = {
       reel: 0,
@@ -731,6 +738,7 @@ export class EngineApp {
       detail,
       targetLabel,
       reticleActive: frame.controlHit !== null,
+      zoomActive: this.cameraFovZoom.isZoomActive(),
       status,
       flashlight,
       flashlightIndicatorVisible:

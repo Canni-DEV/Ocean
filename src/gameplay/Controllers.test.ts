@@ -15,6 +15,7 @@ const input = (forward = 0, right = 0): InputActionSnapshot => ({
   primaryPressed: false,
   primaryReleased: false,
   primaryDown: false,
+  secondaryDown: false,
   wheelSteps: 0,
   lookDeltaX: 0,
   lookDeltaY: 0,

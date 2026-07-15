@@ -1,5 +1,6 @@
 import * as THREE from "three/webgpu";
 import type { InputActionSnapshot } from "../gameplay/types";
+import { BASE_FOV } from "../player/CameraFovZoom";
 
 export class InputController {
   readonly camera = new THREE.PerspectiveCamera(65, 1, 0.1, 100000);
@@ -16,8 +17,9 @@ export class InputController {
   update(deltaSeconds: number, input: InputActionSnapshot): void {
     if (!this.enabled) return;
 
-    this.yaw -= input.lookDeltaX * 0.002;
-    this.pitch = THREE.MathUtils.clamp(this.pitch - input.lookDeltaY * 0.002, -1.45, 1.25);
+    const lookScale = this.camera.fov / BASE_FOV;
+    this.yaw -= input.lookDeltaX * 0.002 * lookScale;
+    this.pitch = THREE.MathUtils.clamp(this.pitch - input.lookDeltaY * 0.002 * lookScale, -1.45, 1.25);
     this.syncRotation();
 
     const boost = input.boost ? 4 : 1;

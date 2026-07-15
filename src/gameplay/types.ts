@@ -10,6 +10,7 @@ export type InputActionSnapshot = {
   primaryPressed: boolean;
   primaryReleased: boolean;
   primaryDown: boolean;
+  secondaryDown: boolean;
   wheelSteps: number;
   lookDeltaX: number;
   lookDeltaY: number;
@@ -98,6 +99,7 @@ export type GameplayUiState = {
   detail: string | null;
   targetLabel: string | null;
   reticleActive: boolean;
+  zoomActive: boolean;
   status: string | null;
   flashlight: FlashlightState;
   flashlightIndicatorVisible: boolean;
@@ -110,6 +112,7 @@ export const DEFAULT_GAMEPLAY_UI: GameplayUiState = {
   detail: null,
   targetLabel: null,
   reticleActive: false,
+  zoomActive: false,
   status: "Click para tomar el control de la cámara",
   flashlight: { powered: false, charge01: 1, charging: false, level: "normal" },
   flashlightIndicatorVisible: false

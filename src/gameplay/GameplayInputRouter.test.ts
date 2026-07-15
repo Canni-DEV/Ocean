@@ -51,4 +51,34 @@ describe("GameplayInputRouter", () => {
     expect(router.consumeFrame().forward).toBe(0);
     router.dispose();
   });
+
+  it("tracks secondary hold independently of primary and clears on unlock", () => {
+    const router = new GameplayInputRouter(canvas);
+    canvas.dispatchEvent(Object.assign(new Event("mousedown"), { button: 2 }));
+    expect(router.consumeFrame()).toMatchObject({ secondaryDown: true, primaryDown: false });
+    canvas.dispatchEvent(Object.assign(new Event("mousedown"), { button: 0 }));
+    expect(router.consumeFrame()).toMatchObject({
+      secondaryDown: true,
+      primaryDown: true,
+      primaryPressed: true
+    });
+    window.dispatchEvent(Object.assign(new Event("mouseup"), { button: 0 }));
+    expect(router.consumeFrame()).toMatchObject({
+      secondaryDown: true,
+      primaryDown: false,
+      primaryReleased: true
+    });
+    (document as unknown as { pointerLockElement: Element | null }).pointerLockElement = null;
+    document.dispatchEvent(new Event("pointerlockchange"));
+    expect(router.consumeFrame().secondaryDown).toBe(false);
+    router.dispose();
+  });
+
+  it("prevents the browser context menu on the canvas", () => {
+    const router = new GameplayInputRouter(canvas);
+    const event = new Event("contextmenu", { cancelable: true });
+    canvas.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    router.dispose();
+  });
 });
