@@ -1,7 +1,7 @@
 import * as THREE from "three/webgpu";
 import type { BoatSystemsState } from "../gameplay/types";
 import type { FlashlightCue } from "../player/PlayerFlashlight";
-import { RADIO_STATION_PATHS } from "../boat/radioConfig";
+import { radioStations } from "../boat/radioConfig";
 
 export class CabinAudio {
   private context: AudioContext | null = null;
@@ -11,11 +11,9 @@ export class CabinAudio {
   private hornGain: GainNode | null = null;
   private pumpOscillator: OscillatorNode | null = null;
   private pumpGain: GainNode | null = null;
-  private radioOscillator: OscillatorNode | null = null;
-  private radioNoise: AudioBufferSourceNode | null = null;
   private radioGain: GainNode | null = null;
-  private radioFallbackGain: GainNode | null = null;
-  private radioTrack: AudioBufferSourceNode | null = null;
+  private radioElement: HTMLAudioElement | null = null;
+  private radioMediaSource: MediaElementAudioSourceNode | null = null;
   private controlClickPanner: PannerNode | null = null;
   private controlClickBuffer: AudioBuffer | null = null;
   private readonly sourcePanners: PannerNode[] = [];
@@ -72,12 +70,19 @@ export class CabinAudio {
     smooth(this.engineGain?.gain, state.engine === "running" ? 0.018 + rpm / 90000 : 0, 0.12);
     smooth(this.hornGain?.gain, state.horn ? 0.1 : 0, 0.02);
     smooth(this.pumpGain?.gain, state.bilgePump ? 0.025 : 0, 0.08);
-    smooth(this.radioGain?.gain, state.radio.powered ? state.radio.volume * 0.1 : 0, 0.05);
-    if (state.radio.station !== this.currentStation) {
-      this.currentStation = state.radio.station;
-      void this.loadStation(state.radio.station);
+    smooth(this.radioGain?.gain, state.radio.powered ? state.radio.volume * 0.35 : 0, 0.05);
+    if (state.radio.powered) {
+      if (state.radio.station !== this.currentStation) {
+        this.currentStation = state.radio.station;
+        void this.loadStation(state.radio.station);
+      } else if (this.radioElement?.paused && this.radioElement.src) {
+        void this.radioElement.play().catch(() => {
+          // Autoplay or transient stream errors stay silent until the next tune.
+        });
+      }
+    } else {
+      this.radioElement?.pause();
     }
-    if (this.radioOscillator) this.radioOscillator.frequency.value = 170 + state.radio.station * 47;
     this.updateListener(camera);
     this.updatePanners(boatRoot);
   }
@@ -85,7 +90,7 @@ export class CabinAudio {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.radioTrack?.stop();
+    this.stopRadioStream();
     void this.context?.close();
     this.context = null;
     this.controlClickPanner = null;
@@ -134,20 +139,6 @@ export class CabinAudio {
     this.radioGain.gain.value = 0;
     this.radioGain.connect(radioLeft);
     this.radioGain.connect(radioRight);
-    this.radioFallbackGain = context.createGain();
-    this.radioFallbackGain.gain.value = 1;
-    this.radioFallbackGain.connect(this.radioGain);
-    this.radioOscillator = context.createOscillator();
-    this.radioOscillator.type = "sine";
-    this.radioOscillator.connect(this.radioFallbackGain);
-    this.radioOscillator.start();
-    this.radioNoise = context.createBufferSource();
-    this.radioNoise.buffer = this.createNoiseBuffer(context);
-    this.radioNoise.loop = true;
-    const noiseGain = context.createGain();
-    noiseGain.gain.value = 0.16;
-    this.radioNoise.connect(noiseGain).connect(this.radioFallbackGain);
-    this.radioNoise.start();
   }
 
   private createPanner(context: AudioContext, destination: AudioNode): PannerNode {
@@ -160,13 +151,6 @@ export class CabinAudio {
     panner.connect(destination);
     this.sourcePanners.push(panner);
     return panner;
-  }
-
-  private createNoiseBuffer(context: AudioContext): AudioBuffer {
-    const buffer = context.createBuffer(1, context.sampleRate * 2, context.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let index = 0; index < data.length; index += 1) data[index] = Math.random() * 2 - 1;
-    return buffer;
   }
 
   private createControlClickBuffer(context: AudioContext): AudioBuffer {
@@ -189,28 +173,51 @@ export class CabinAudio {
     return buffer;
   }
 
-  private async loadStation(station: number): Promise<void> {
+  private ensureRadioElement(): HTMLAudioElement | null {
     const context = this.context;
-    if (!context) return;
+    if (!context || !this.radioGain) return null;
+    if (this.radioElement) return this.radioElement;
+
+    const element = new Audio();
+    element.crossOrigin = "anonymous";
+    element.preload = "none";
+    this.radioMediaSource = context.createMediaElementSource(element);
+    this.radioMediaSource.connect(this.radioGain);
+    this.radioElement = element;
+    return element;
+  }
+
+  private async loadStation(station: number): Promise<void> {
+    const stationConfig = radioStations[station - 1];
+    const element = this.ensureRadioElement();
+    if (!stationConfig || !element) return;
+
     const token = ++this.stationLoadToken;
-    this.radioTrack?.stop();
-    this.radioTrack = null;
-    if (this.radioFallbackGain) this.radioFallbackGain.gain.value = 1;
+    element.pause();
+    element.src = stationConfig.url;
+    element.load();
+
     try {
-      const response = await fetch(RADIO_STATION_PATHS[station - 1]);
-      if (!response.ok) return;
-      const buffer = await context.decodeAudioData(await response.arrayBuffer());
-      if (token !== this.stationLoadToken || !this.radioGain) return;
-      const source = context.createBufferSource();
-      source.buffer = buffer;
-      source.loop = true;
-      source.connect(this.radioGain);
-      source.start();
-      this.radioTrack = source;
-      this.radioFallbackGain?.gain.setTargetAtTime(0, context.currentTime, 0.08);
+      await element.play();
+      if (token !== this.stationLoadToken) {
+        element.pause();
+      }
     } catch {
-      // The procedural carrier and static remain active as an intentional fallback.
+      // Stream failures stay silent; tuning again retries the connection.
     }
+  }
+
+  private stopRadioStream(): void {
+    this.stationLoadToken += 1;
+    if (this.radioElement) {
+      this.radioElement.pause();
+      this.radioElement.removeAttribute("src");
+      this.radioElement.load();
+      this.radioElement = null;
+    }
+    this.radioMediaSource?.disconnect();
+    this.radioMediaSource = null;
+    this.currentStation = 0;
   }
 
   private updateListener(camera: THREE.Camera): void {

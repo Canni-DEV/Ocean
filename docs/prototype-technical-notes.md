@@ -20,7 +20,7 @@ This prototype is intentionally WebGPU-only. It should fail with a clear message
 - Station entry uses dedicated proximity/orientation zones; cockpit buttons use a separate control-only raycast with subtle aim assistance and hull occlusion.
 - The runtime cockpit rig adds non-colliding hit proxies, animated switches, six live instruments, navigation/anchor/cabin lights, wiper, wet glass and visible bilge water without modifying the source GLB.
 - Motor state gates propulsion and consumes a four-hour normalized fuel tank. Electrical accessories remain independent.
-- Radio has five lazy-loaded slots at `/audio/radio/station-01.ogg` through `station-05.ogg`; missing files fall back to procedural station tones and static.
+- Radio tunes six free laut.fm streams through an `HTMLAudioElement` fed into the cabin Web Audio graph; power off pauses the active stream.
 
 ## Architecture
 
