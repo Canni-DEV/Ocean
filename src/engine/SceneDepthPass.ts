@@ -105,10 +105,14 @@ export class SceneDepthPass {
     const depthTexture = new THREE.DepthTexture(width, height);
     depthTexture.name = "scene-depth-prepass";
 
+    // Explicit samples: 0 keeps this prepass non-MSAA. Cloud composite shaders
+    // sample it as a regular depth texture; matching the canvas MSAA sample
+    // count would require texture_depth_multisampled_2d and is unsupported here.
     const target = new THREE.RenderTarget(width, height, {
       depthBuffer: true,
       stencilBuffer: false,
       depthTexture,
+      samples: 0,
       generateMipmaps: false,
       minFilter: THREE.NearestFilter,
       magFilter: THREE.NearestFilter

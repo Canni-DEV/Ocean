@@ -235,7 +235,16 @@ export class VolumetricCloudPass {
   private readonly uDebugMode: AnyUniform<number> = uniform(0) as any;
   private readonly historyTexNode: NodeRef;
   private readonly resolvedTexNode: NodeRef;
-  private readonly sceneDepthPlaceholder = new THREE.DepthTexture(1, 1);
+  /**
+   * Owns the placeholder depth texture. Three's WebGPU backend derives the
+   * depth binding's `multisampled` flag from `texture.renderTarget.samples`
+   * (or, if unset, from the *current* canvas samples). Without this non-MSAA
+   * owner, the first compile of the composite mesh against an antialiased
+   * canvas generates `texture_depth_multisampled_2d` and later fails when the
+   * real scene-depth prepass (sample count 1) is bound.
+   */
+  private readonly sceneDepthPlaceholderTarget: THREE.RenderTarget;
+  private readonly sceneDepthPlaceholder: THREE.DepthTexture;
   private readonly sceneDepthTexNode: NodeRef;
   private weatherStability = 1;
   private readonly uCameraNear: AnyUniform<number> = uniform(0.1) as any;
@@ -250,6 +259,16 @@ export class VolumetricCloudPass {
   ) {
     this.resolutionScale = quality.resolutionScale;
     this.targets = [this.createTarget(2, 2), this.createTarget(2, 2)];
+
+    const placeholderDepth = new THREE.DepthTexture(1, 1);
+    placeholderDepth.name = "scene-depth-placeholder";
+    this.sceneDepthPlaceholderTarget = new THREE.RenderTarget(1, 1, {
+      depthBuffer: true,
+      stencilBuffer: false,
+      depthTexture: placeholderDepth,
+      samples: 0
+    });
+    this.sceneDepthPlaceholder = placeholderDepth;
 
     this.historyTexNode = texture(this.targets[0].texture);
     this.resolvedTexNode = texture(this.targets[0].texture);
@@ -385,6 +404,7 @@ export class VolumetricCloudPass {
   dispose(): void {
     this.targets.forEach((target) => target.dispose());
     this.material.dispose();
+    this.sceneDepthPlaceholderTarget.dispose();
     this.sceneDepthPlaceholder.dispose();
     this.compositeMesh.geometry.dispose();
     (this.compositeMesh.material as THREE.Material).dispose();
