@@ -21,6 +21,7 @@ import {
   vec4
 } from "three/tsl";
 import { GRAVITY_MS2, jonswapAlpha, jonswapPeakOmega, type SeaStateParams } from "../../state/seaState";
+import type { CascadeConfig } from "./OceanFFT";
 
 type NodeRef = any;
 
@@ -41,6 +42,7 @@ export type SpectrumUniforms = {
   windDirection: NodeRef;
   swellAmount: NodeRef;
   swellDirection: NodeRef;
+  cascadeSeed: NodeRef;
 };
 
 export function createSpectrumUniforms(): SpectrumUniforms {
@@ -50,17 +52,19 @@ export function createSpectrumUniforms(): SpectrumUniforms {
     gamma: uniform(3.3),
     windDirection: uniform(0),
     swellAmount: uniform(0.3),
-    swellDirection: uniform(0)
+    swellDirection: uniform(0),
+    cascadeSeed: uniform(0)
   };
 }
 
-export function applySeaStateToSpectrum(uniforms: SpectrumUniforms, params: SeaStateParams): void {
+export function applySeaStateToSpectrum(uniforms: SpectrumUniforms, params: SeaStateParams, cascadeSeed: number): void {
   uniforms.alpha.value = jonswapAlpha(params.windSpeedMs, params.fetchMeters);
   uniforms.peakOmega.value = jonswapPeakOmega(params.windSpeedMs, params.fetchMeters);
   uniforms.gamma.value = params.gamma;
   uniforms.windDirection.value = params.windDirectionRad;
   uniforms.swellAmount.value = params.swellAmount;
   uniforms.swellDirection.value = params.swellDirectionRad;
+  uniforms.cascadeSeed.value = cascadeSeed & 0x00ffffff;
 }
 
 export function createSpectrumStorageTexture(resolution: number, name: string): THREE.StorageTexture {
@@ -84,8 +88,7 @@ function spectrumAmplitude(
   kz: NodeRef,
   kLen: NodeRef,
   dk: number,
-  kMin: number,
-  kMax: number,
+  config: CascadeConfig,
   u: SpectrumUniforms
 ): NodeRef {
   const safeK = max(kLen, float(1e-5));
@@ -130,8 +133,21 @@ function spectrumAmplitude(
   const variance = totalSpectrum.mul(dOmegaDk).div(safeK).mul(dk * dk).mul(ENERGY_SCALE);
   const amplitude = sqrt(variance.mul(2));
 
-  const inBand = kLen.greaterThanEqual(float(kMin)).and(kLen.lessThan(float(kMax)));
-  return select(inBand, amplitude, float(0));
+  let bandWeight: NodeRef = float(1);
+  if (config.lowerCrossover !== null) {
+    const start = Math.log(config.lowerCrossover / (1 + config.overlapRatio));
+    const end = Math.log(config.lowerCrossover * (1 + config.overlapRatio));
+    const t = log(safeK).sub(start).div(end - start).clamp(0, 1);
+    bandWeight = bandWeight.mul(sin(t.mul(Math.PI * 0.5)));
+  }
+  if (config.upperCrossover !== null) {
+    const start = Math.log(config.upperCrossover / (1 + config.overlapRatio));
+    const end = Math.log(config.upperCrossover * (1 + config.overlapRatio));
+    const t = log(safeK).sub(start).div(end - start).clamp(0, 1);
+    bandWeight = bandWeight.mul(cos(t.mul(Math.PI * 0.5)));
+  }
+  const inBand = kLen.greaterThanEqual(float(config.kMin)).and(kLen.lessThan(float(config.kMax)));
+  return select(inBand, amplitude.mul(bandWeight), float(0));
 }
 
 /** Two independent standard gaussians from a deterministic per-texel seed. */
@@ -153,8 +169,7 @@ export function createInitialSpectrumPass(
   target: THREE.StorageTexture,
   resolution: number,
   patchSize: number,
-  kMin: number,
-  kMax: number,
+  config: CascadeConfig,
   u: SpectrumUniforms
 ): NodeRef {
   const n = resolution;
@@ -172,14 +187,14 @@ export function createInitialSpectrumPass(
 
     const mirrorX = uint(n).sub(x).mod(uint(n));
     const mirrorY = uint(n).sub(y).mod(uint(n));
-    const seedSelf = x.add(y.mul(uint(n))).toFloat();
-    const seedMirror = mirrorX.add(mirrorY.mul(uint(n))).toFloat();
+    const seedSelf = x.add(y.mul(uint(n))).toFloat().add(u.cascadeSeed);
+    const seedMirror = mirrorX.add(mirrorY.mul(uint(n))).toFloat().add(u.cascadeSeed);
 
     const gaussSelf = gaussianPair(seedSelf, 1, n * n + 7);
     const gaussMirror = gaussianPair(seedMirror, 1, n * n + 7);
 
-    const ampPlus = spectrumAmplitude(kx, kz, kLen, dk, kMin, kMax, u);
-    const ampMinus = spectrumAmplitude(kx.negate(), kz.negate(), kLen, dk, kMin, kMax, u);
+    const ampPlus = spectrumAmplitude(kx, kz, kLen, dk, config, u);
+    const ampMinus = spectrumAmplitude(kx.negate(), kz.negate(), kLen, dk, config, u);
 
     const h0k = gaussSelf.mul(ampPlus.mul(INV_SQRT2));
     const h0MinusK = gaussMirror.mul(ampMinus.mul(INV_SQRT2));

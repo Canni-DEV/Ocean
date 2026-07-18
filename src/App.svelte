@@ -7,6 +7,7 @@
   import DebugPanel from "./ui/DebugPanel.svelte";
   import GameplayHUD from "./ui/GameplayHUD.svelte";
   import { DEFAULT_GAMEPLAY_UI, type GameplayUiState } from "./gameplay/types";
+  import { applyOceanValidationSettings, readOceanValidationScenario } from "./ocean/OceanValidationHarness";
 
   let canvas: HTMLCanvasElement;
   let debugPanel: HTMLDivElement;
@@ -16,6 +17,10 @@
   let gameplayUi = $state<GameplayUiState>({ ...DEFAULT_GAMEPLAY_UI });
 
   onMount(() => {
+    const validationScenario = readOceanValidationScenario(window.location.search);
+    if (validationScenario) {
+      debugSettings.set(applyOceanValidationSettings(get(debugSettings), validationScenario));
+    }
     engine = new EngineApp({
       canvas,
       initialSettings: get(debugSettings),

@@ -1,16 +1,26 @@
 import * as THREE from "three/webgpu";
 import type { QualityTier } from "../../engine/types";
-import { seaStatesDiffer, type SeaStateParams } from "../../state/seaState";
+import { jonswapAlpha, jonswapPeakOmega, seaStatesDiffer, type SeaStateParams } from "../../state/seaState";
 import {
   createSimulationUniforms,
   OceanCascade,
   type CascadeConfig,
+  type CascadeRole,
   type SimulationUniforms
 } from "./OceanFFT";
 
+export type CascadeProfile = {
+  role: CascadeRole;
+  patchSize: number;
+  resolution: number;
+  choppinessScale: number;
+  choppinessLimit: number;
+  slopeVariance: number;
+};
+
 export type OceanQualityConfig = {
-  fftResolution: number;
-  cascadeCount: 2 | 3;
+  cascades: readonly CascadeProfile[];
+  slopeMoments: "full-mip-chain";
   meshRings: number;
   meshSectors: number;
   meshInnerRadius: number;
@@ -20,8 +30,11 @@ export type OceanQualityConfig = {
 
 export const OCEAN_QUALITY: Record<QualityTier, OceanQualityConfig> = {
   low: {
-    fftResolution: 128,
-    cascadeCount: 2,
+    cascades: [
+      { role: "swell", patchSize: 1024, resolution: 128, choppinessScale: 0.75, choppinessLimit: 0.8, slopeVariance: 0.012 },
+      { role: "windSea", patchSize: 128, resolution: 128, choppinessScale: 1.0, choppinessLimit: 1.0, slopeVariance: 0.045 }
+    ],
+    slopeMoments: "full-mip-chain",
     meshRings: 110,
     meshSectors: 112,
     meshInnerRadius: 1.6,
@@ -29,8 +42,12 @@ export const OCEAN_QUALITY: Record<QualityTier, OceanQualityConfig> = {
     envMapIntervalMs: 500
   },
   medium: {
-    fftResolution: 256,
-    cascadeCount: 3,
+    cascades: [
+      { role: "swell", patchSize: 1536, resolution: 256, choppinessScale: 0.75, choppinessLimit: 0.8, slopeVariance: 0.012 },
+      { role: "windSea", patchSize: 384, resolution: 256, choppinessScale: 1.0, choppinessLimit: 1.0, slopeVariance: 0.035 },
+      { role: "chop", patchSize: 96, resolution: 256, choppinessScale: 1.1, choppinessLimit: 1.1, slopeVariance: 0.075 }
+    ],
+    slopeMoments: "full-mip-chain",
     meshRings: 150,
     meshSectors: 168,
     meshInnerRadius: 1.1,
@@ -38,8 +55,12 @@ export const OCEAN_QUALITY: Record<QualityTier, OceanQualityConfig> = {
     envMapIntervalMs: 250
   },
   high: {
-    fftResolution: 512,
-    cascadeCount: 3,
+    cascades: [
+      { role: "swell", patchSize: 2048, resolution: 256, choppinessScale: 0.75, choppinessLimit: 0.8, slopeVariance: 0.012 },
+      { role: "windSea", patchSize: 512, resolution: 512, choppinessScale: 1.0, choppinessLimit: 1.0, slopeVariance: 0.035 },
+      { role: "chop", patchSize: 128, resolution: 512, choppinessScale: 1.1, choppinessLimit: 1.1, slopeVariance: 0.075 }
+    ],
+    slopeMoments: "full-mip-chain",
     meshRings: 190,
     meshSectors: 224,
     meshInnerRadius: 0.8,
@@ -48,32 +69,43 @@ export const OCEAN_QUALITY: Record<QualityTier, OceanQualityConfig> = {
   }
 };
 
-/** Patch sizes with non-integer ratios to avoid visible tiling alignment. */
-const CASCADE_PATCH_SIZES: Record<2 | 3, number[]> = {
-  2: [217, 27],
-  3: [251, 61, 13]
-};
+const OVERLAP_RATIO = 0.2;
 
-function buildCascadeConfigs(resolution: number, cascadeCount: 2 | 3): CascadeConfig[] {
-  const patchSizes = CASCADE_PATCH_SIZES[cascadeCount];
-  const configs: CascadeConfig[] = [];
+function buildCascadeConfigs(profiles: readonly CascadeProfile[]): CascadeConfig[] {
+  const safeMax = profiles.map((profile) => (Math.PI * profile.resolution * 0.72) / profile.patchSize);
+  const crossovers = safeMax.slice(0, -1);
 
-  for (let i = 0; i < patchSizes.length; i += 1) {
-    const patchSize = patchSizes[i];
-    const nyquist = (Math.PI * resolution) / patchSize;
-    const isLast = i === patchSizes.length - 1;
-    const kMin = i === 0 ? 0.0001 : configs[i - 1].kMax;
-    const kMax = isLast ? nyquist * 0.72 : Math.min(nyquist * 0.5, (Math.PI * resolution) / patchSizes[i + 1]);
-    configs.push({ patchSize, kMin, kMax });
-  }
-
-  return configs;
+  return profiles.map((profile, index) => {
+    const fundamental = (Math.PI * 2) / profile.patchSize;
+    const lowerCrossover = index === 0 ? null : crossovers[index - 1];
+    const upperCrossover = index === profiles.length - 1 ? null : crossovers[index];
+    return {
+      index,
+      role: profile.role,
+      patchSize: profile.patchSize,
+      resolution: profile.resolution,
+      kMin: lowerCrossover === null ? fundamental : lowerCrossover / (1 + OVERLAP_RATIO),
+      kMax: upperCrossover === null ? safeMax[index] : upperCrossover * (1 + OVERLAP_RATIO),
+      lowerCrossover,
+      upperCrossover,
+      overlapRatio: OVERLAP_RATIO,
+      choppinessScale: profile.choppinessScale,
+      choppinessLimit: profile.choppinessLimit,
+      // Spectrum generation intentionally stops at 72% of Nyquist. Report the
+      // shortest wavelength that is actually present, not the ideal 2-cell one.
+      representativeWavelength: (profile.patchSize / profile.resolution) * (2 / 0.72),
+      slopeVariance: profile.slopeVariance
+    };
+  });
 }
 
-/**
- * Owns the FFT cascades and shared simulation uniforms. Runs all compute work
- * for one frame via `update()`.
- */
+export type OceanSpectrumMetrics = {
+  energy: number;
+  heightVariance: number;
+  slopeVariance: number;
+  correlation: number;
+};
+
 export class OceanSimulation {
   readonly cascades: OceanCascade[];
   readonly uniforms: SimulationUniforms;
@@ -81,27 +113,52 @@ export class OceanSimulation {
 
   private currentSeaState: SeaStateParams | null = null;
   private lastComputeMs = 0;
+  private spectrumMetrics: OceanSpectrumMetrics[] = [];
 
   constructor(tier: QualityTier) {
     this.quality = OCEAN_QUALITY[tier];
     this.uniforms = createSimulationUniforms();
-
-    const configs = buildCascadeConfigs(this.quality.fftResolution, this.quality.cascadeCount);
-    this.cascades = configs.map((config) => new OceanCascade(this.quality.fftResolution, config, this.uniforms));
+    const configs = buildCascadeConfigs(this.quality.cascades);
+    this.cascades = configs.map((config) => new OceanCascade(config, this.uniforms));
+    this.spectrumMetrics = configs.map((config) => ({
+      energy: config.slopeVariance * config.patchSize,
+      heightVariance: config.slopeVariance * config.representativeWavelength ** 2 / (Math.PI * Math.PI * 4),
+      slopeVariance: config.slopeVariance,
+      correlation: 0
+    }));
   }
 
   get computeMs(): number {
     return this.lastComputeMs;
   }
 
+  get metrics(): readonly OceanSpectrumMetrics[] {
+    return this.spectrumMetrics;
+  }
+
+  get slopeMomentComputeMs(): number {
+    return this.cascades.reduce((sum, cascade) => sum + cascade.slopeMomentComputeMs, 0);
+  }
+
   setSeaState(params: SeaStateParams): void {
     const changed = this.currentSeaState === null || seaStatesDiffer(this.currentSeaState, params);
     this.currentSeaState = { ...params };
-
     this.uniforms.choppiness.value = params.choppiness;
     this.uniforms.foamDecay.value = params.foamDecay;
 
     if (changed) {
+      const alpha = jonswapAlpha(params.windSpeedMs, params.fetchMeters);
+      const peakOmega = jonswapPeakOmega(params.windSpeedMs, params.fetchMeters);
+      this.spectrumMetrics = this.cascades.map((cascade) => {
+        const seaScale = Math.max(0.05, alpha * 100) * (1 + params.swellAmount * (cascade.config.role === "swell" ? 0.7 : 0.1));
+        const slopeVariance = cascade.config.slopeVariance * seaScale;
+        return {
+          energy: slopeVariance * cascade.config.patchSize / Math.max(0.2, peakOmega),
+          heightVariance: slopeVariance * cascade.config.representativeWavelength ** 2 / (Math.PI * Math.PI * 4),
+          slopeVariance,
+          correlation: 0
+        };
+      });
       for (const cascade of this.cascades) {
         cascade.applySeaState(params);
         cascade.markSpectrumDirty();
@@ -113,11 +170,7 @@ export class OceanSimulation {
     const start = performance.now();
     this.uniforms.time.value = timeSeconds;
     this.uniforms.deltaTime.value = Math.max(1 / 240, Math.min(0.1, deltaSeconds));
-
-    for (const cascade of this.cascades) {
-      cascade.update(renderer);
-    }
-
+    for (const cascade of this.cascades) cascade.update(renderer);
     this.lastComputeMs = performance.now() - start;
   }
 

@@ -9,6 +9,12 @@ import { FishingRopeSystem } from "../fishing/FishingRopeSystem";
 import { OceanPhysicsSampler } from "../ocean/OceanPhysicsSampler";
 import { OceanRenderer } from "../ocean/OceanRenderer";
 import { BoatWaterInteraction } from "../ocean/BoatWaterInteraction";
+import {
+  applyOceanValidationCamera,
+  applyOceanValidationSettings,
+  readOceanValidationScenario,
+  type OceanValidationScenario
+} from "../ocean/OceanValidationHarness";
 import { CameraFovZoom } from "../player/CameraFovZoom";
 import { FirstPersonController } from "../player/FirstPersonController";
 import { PlayerFlashlight, type FlashlightConfig } from "../player/PlayerFlashlight";
@@ -85,6 +91,14 @@ export class EngineApp {
   private boatInteractionComputeMs: number | null = null;
   private cloudComputeMs: number | null = null;
   private depthPrepassMs: number | null = null;
+  private gpuComputeMs: number | null = null;
+  private gpuRenderMs: number | null = null;
+  private gpuResolveInFlight = false;
+  private gpuResolvePromise: Promise<void> | null = null;
+  private lastGpuResolveMs = 0;
+  private readonly validationFrameSamples: number[] = [];
+  private readonly validationComputeSamples: number[] = [];
+  private readonly validationRenderSamples: number[] = [];
   private simulationTimeSeconds = 0;
   private firstPersonActive = false;
   private gameplayMode: GameplayMode = "walking";
@@ -97,15 +111,19 @@ export class EngineApp {
   private flashlightStatusMessage: string | null = null;
   private status: EngineMetrics["status"] = "booting";
   private error: string | null = null;
+  private readonly validationScenario: OceanValidationScenario | null;
 
   constructor(options: EngineAppOptions) {
     this.canvas = options.canvas;
     this.onMetrics = options.onMetrics;
     this.onGameplayUi = options.onGameplayUi ?? (() => {});
-    this.settings = { ...options.initialSettings };
-    this.activeQuality = options.initialSettings.quality;
-    this.worldTimeHours = options.initialSettings.worldTimeHours;
-    this.weatherPreset = options.initialSettings.weatherPreset;
+    this.validationScenario = readOceanValidationScenario(window.location.search);
+    this.settings = this.validationScenario
+      ? applyOceanValidationSettings(options.initialSettings, this.validationScenario)
+      : { ...options.initialSettings };
+    this.activeQuality = this.settings.quality;
+    this.worldTimeHours = this.settings.worldTimeHours;
+    this.weatherPreset = this.settings.weatherPreset;
     this.weatherSource = cloneWeather(WEATHER_PRESETS[this.weatherPreset]);
     this.weatherTarget = cloneWeather(WEATHER_PRESETS[this.weatherPreset]);
     this.weatherCurrent = cloneWeather(WEATHER_PRESETS[this.weatherPreset]);
@@ -114,13 +132,13 @@ export class EngineApp {
     this.firstPerson = new FirstPersonController(this.input.camera, this.canvas);
     this.flashlight = new PlayerFlashlight(this.scene, flashlightConfigFromSettings(this.settings), this.activeQuality);
     this.fishingRopeSystem = new FishingRopeSystem({
-      enabled: options.initialSettings.fishingRopeEnabled,
-      minLengthM: options.initialSettings.fishingRopeMinLengthM,
-      maxLengthM: options.initialSettings.fishingRopeMaxLengthM,
-      initialLengthM: options.initialSettings.fishingRopeInitialLengthM,
-      reelSpeedMs: options.initialSettings.fishingReelSpeedMs,
-      ropeRadius: options.initialSettings.fishingRopeRadius,
-      renderMode: options.initialSettings.fishingRopeRenderMode,
+      enabled: this.settings.fishingRopeEnabled,
+      minLengthM: this.settings.fishingRopeMinLengthM,
+      maxLengthM: this.settings.fishingRopeMaxLengthM,
+      initialLengthM: this.settings.fishingRopeInitialLengthM,
+      reelSpeedMs: this.settings.fishingReelSpeedMs,
+      ropeRadius: this.settings.fishingRopeRadius,
+      renderMode: this.settings.fishingRopeRenderMode,
       segmentCount: 28
     });
   }
@@ -192,7 +210,15 @@ export class EngineApp {
     this.sceneDepthPass.dispose();
     this.audio.dispose();
     this.flashlight.dispose();
-    this.renderer?.dispose();
+    const renderer = this.renderer;
+    this.renderer = null;
+    if (renderer) {
+      if (this.gpuResolvePromise) {
+        void this.gpuResolvePromise.finally(() => renderer.dispose());
+      } else {
+        renderer.dispose();
+      }
+    }
   }
 
   resetBoat(): void {
@@ -220,7 +246,8 @@ export class EngineApp {
       this.renderer = new THREE.WebGPURenderer({
         canvas: this.canvas,
         antialias: true,
-        alpha: false
+        alpha: false,
+        trackTimestamp: true
       });
       this.renderer.outputColorSpace = THREE.SRGBColorSpace;
       this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -239,6 +266,10 @@ export class EngineApp {
       this.systems.state.workLight = this.settings.boatLightsOn;
       this.boatVisual.setLightsOn(this.settings.boatLightsOn);
       this.scene.add(this.boatVisual.group);
+      if (this.validationScenario) {
+        applyOceanValidationCamera(this.input.camera, this.validationScenario);
+        this.simulationTimeSeconds = this.validationScenario.simulationTimeSeconds;
+      }
       this.scene.add(this.fishingRopeSystem.group);
       this.resetBoat();
       this.setDebugFreeCamera(!this.settings.firstPerson);
@@ -432,11 +463,13 @@ export class EngineApp {
       this.worldTimeHours = (this.worldTimeHours + (deltaSeconds * this.settings.timeScale) / 3600) % 24;
       this.updateWeather(deltaSeconds);
       this.applyFloatingOrigin();
-      this.simulationTimeSeconds += deltaSeconds;
+      this.simulationTimeSeconds = this.validationScenario
+        ? this.validationScenario.simulationTimeSeconds
+        : this.simulationTimeSeconds + deltaSeconds;
     }
 
     const tunedWeather = this.applyDebugWeatherOverrides(this.weatherCurrent);
-    if (!this.settings.paused && boatControl) {
+    if (!this.settings.paused && boatControl && !this.validationScenario) {
       this.updateBoat(boatControl, tunedWeather, deltaSeconds);
       this.updateFishingRope(fishingControl.reel, fishingControl.boomElevationRad, deltaSeconds);
       const engineBeforeSystems = this.systems.state.engine;
@@ -466,6 +499,10 @@ export class EngineApp {
     }
     this.audio.update(this.systems.state, this.input.camera, this.boatVisual.group);
     this.publishGameplayUi(frameInput, interactionFrame, stationCandidate);
+
+    if (this.validationScenario) {
+      applyOceanValidationCamera(this.input.camera, this.validationScenario);
+    }
 
     const environment = this.atmosphere.update({
       renderer: this.renderer,
@@ -499,7 +536,8 @@ export class EngineApp {
       environment,
       this.settings,
       this.originOffsetMeters,
-      this.simulationTimeSeconds
+      this.simulationTimeSeconds,
+      this.canvas.height
     );
 
     const depthStart = performance.now();
@@ -529,12 +567,14 @@ export class EngineApp {
 
     try {
       this.renderer.render(this.scene, this.input.camera);
+      this.scheduleGpuTimestampResolve(now);
     } catch (error: unknown) {
       this.status = "error";
       this.error = error instanceof Error ? error.message : String(error);
     }
 
     this.stats.end(statStart, deltaMs);
+    if (this.validationScenario) pushBounded(this.validationFrameSamples, deltaMs, 3600);
 
     if (now - this.lastMetricsMs > 180) {
       this.lastMetricsMs = now;
@@ -601,6 +641,9 @@ export class EngineApp {
     const target = buildSeaState(weather, this.settings);
     if (this.seaStateCurrent === null) {
       this.seaStateCurrent = target;
+    } else if (this.seaStateCurrent.seed !== target.seed) {
+      // A seed is a deliberate realization change, not a weather transition.
+      this.seaStateCurrent = target;
     } else {
       // Exponential smoothing (~2 s time constant) for gentle spectrum shifts
       const blend = 1 - Math.exp(-deltaSeconds / 2);
@@ -621,8 +664,7 @@ export class EngineApp {
     return {
       ...weather,
       cloudCoverage: THREE.MathUtils.clamp(weather.cloudCoverage + this.settings.cloudCoverageBias, 0, 1),
-      cloudDensity: THREE.MathUtils.clamp(weather.cloudDensity + this.settings.cloudDensityBias, 0, 1),
-      swellDirectionRad: (this.settings.swellDirectionDeg * Math.PI) / 180
+      cloudDensity: THREE.MathUtils.clamp(weather.cloudDensity + this.settings.cloudDensityBias, 0, 1)
     };
   }
 
@@ -759,16 +801,23 @@ export class EngineApp {
       camera.z + this.originOffsetMeters.z
     );
 
-    this.onMetrics({
+    const metrics: EngineMetrics = {
       backend: "webgpu",
       fps: this.stats.fps,
       frameMs: this.stats.frameMs,
       cpuMs: this.stats.cpuMs,
-      gpuMs: null,
+      gpuMs:
+        this.gpuComputeMs === null && this.gpuRenderMs === null
+          ? null
+          : (this.gpuComputeMs ?? 0) + (this.gpuRenderMs ?? 0),
+      gpuComputeMs: this.gpuComputeMs,
+      gpuRenderMs: this.gpuRenderMs,
       oceanComputeMs: this.oceanComputeMs,
+      slopeMomentComputeMs: this.simulation?.slopeMomentComputeMs ?? null,
       boatInteractionComputeMs: this.boatInteractionComputeMs,
       cloudComputeMs: this.cloudComputeMs,
       depthPrepassMs: this.depthPrepassMs,
+      oceanSpectrum: this.simulation?.metrics.map((metric) => ({ ...metric })) ?? [],
       seaLevelAtCameraM: seaLevel ?? null,
       worldTimeHours: this.worldTimeHours,
       camera: {
@@ -787,7 +836,56 @@ export class EngineApp {
       originOffsetMeters: { ...this.originOffsetMeters },
       status: this.status,
       error: this.error
-    });
+    };
+    this.onMetrics(metrics);
+    if (this.validationScenario) {
+      (window as any).__oceanValidation = {
+        scenario: this.validationScenario,
+        settings: { ...this.settings },
+        spectrum: this.simulation?.metrics ?? [],
+        metrics,
+        samples: {
+          frameMs: [...this.validationFrameSamples],
+          gpuComputeMs: [...this.validationComputeSamples],
+          gpuRenderMs: [...this.validationRenderSamples]
+        },
+        summary: {
+          frameP95Ms: percentile(this.validationFrameSamples, 0.95),
+          gpuComputeP95Ms: percentile(this.validationComputeSamples, 0.95),
+          gpuRenderP95Ms: percentile(this.validationRenderSamples, 0.95)
+        }
+      };
+    }
+  }
+
+  private scheduleGpuTimestampResolve(nowMs: number): void {
+    // Each FFT stage is its own compute context; resolve often enough to stay
+    // below Three.js' fixed timestamp-query pool without resolving per pass.
+    if (!this.renderer || this.gpuResolveInFlight || nowMs - this.lastGpuResolveMs < 100) return;
+    this.gpuResolveInFlight = true;
+    this.lastGpuResolveMs = nowMs;
+    const renderer = this.renderer as any;
+    this.gpuResolvePromise = Promise.all([
+      renderer.resolveTimestampsAsync("compute") as Promise<number | undefined>,
+      renderer.resolveTimestampsAsync("render") as Promise<number | undefined>
+    ])
+      .then(([compute, render]) => {
+        if (Number.isFinite(compute)) {
+          this.gpuComputeMs = compute as number;
+          if (this.validationScenario) pushBounded(this.validationComputeSamples, compute as number, 600);
+        }
+        if (Number.isFinite(render)) {
+          this.gpuRenderMs = render as number;
+          if (this.validationScenario) pushBounded(this.validationRenderSamples, render as number, 600);
+        }
+      })
+      .catch(() => {
+        // Timestamp queries are optional on some WebGPU adapters.
+      })
+      .finally(() => {
+        this.gpuResolveInFlight = false;
+        this.gpuResolvePromise = null;
+      });
   }
 
   private isNearHelmCharger(rig: ReturnType<BoatVisual["getCockpitRig"]>): boolean {
@@ -799,6 +897,17 @@ export class EngineApp {
     const dz = this.stationPosition.z - anchor.z;
     return dx * dx + dz * dz <= 1.25 * 1.25 && Math.abs(this.stationPosition.y - anchor.y) <= 1.5;
   }
+}
+
+function pushBounded(target: number[], value: number, capacity: number): void {
+  target.push(value);
+  if (target.length > capacity) target.splice(0, target.length - capacity);
+}
+
+function percentile(values: readonly number[], fraction: number): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))];
 }
 
 function flashlightConfigFromSettings(settings: DebugSettings): FlashlightConfig {

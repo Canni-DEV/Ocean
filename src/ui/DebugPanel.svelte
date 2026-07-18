@@ -8,7 +8,6 @@
     QualityTier,
     WeatherPresetName
   } from "../engine/types";
-  import { WEATHER_DEFAULT_BEAUFORT } from "../state/weather";
   import { beaufortToWindSpeed } from "../state/seaState";
 
   type Props = {
@@ -45,8 +44,21 @@
     { value: "boatInteraction", label: "Boat Wake" },
     { value: "jacobian", label: "Jacobian" },
     { value: "slope", label: "Slope" },
+    { value: "rawSlope", label: "Raw Slope" },
+    { value: "filteredSlope", label: "Filtered Slope" },
+    { value: "slopeMip", label: "Slope Moment Mip" },
+    { value: "slopeVariance", label: "Slope Variance" },
+    { value: "anisotropy", label: "Anisotropy" },
+    { value: "roughness", label: "Final Roughness" },
+    { value: "jacobianTerms", label: "Jacobian Terms" },
+    { value: "geometryLodWeight", label: "Geometry LOD" },
+    { value: "normalLodWeight", label: "Normal LOD" },
+    { value: "unresolvedEnergy", label: "Unresolved Energy" },
     { value: "cascades", label: "Cascades" },
-    { value: "fresnel", label: "Fresnel" }
+    { value: "fresnel", label: "Fresnel" },
+    { value: "opticalDepth", label: "Optical Path" },
+    { value: "waterVolume", label: "Water Volume" },
+    { value: "reflectionGlitter", label: "Reflection / Glitter" }
   ];
 
   const atmosphereDebugModes: Array<{ value: AtmosphereDebugMode; label: string }> = [
@@ -85,7 +97,7 @@
   }
 
   function selectWeather(preset: WeatherPresetName) {
-    patch({ weatherPreset: preset, beaufort: WEATHER_DEFAULT_BEAUFORT[preset] });
+    patch({ weatherPreset: preset });
   }
 
   const beaufortLabel = $derived(beaufortLabels[Math.round(Math.min(12, Math.max(0, settings.beaufort)))]);
@@ -95,9 +107,16 @@
     { label: "FPS", value: metrics.fps.toFixed(0) },
     { label: "Frame", value: `${metrics.frameMs.toFixed(1)} ms` },
     { label: "CPU", value: `${metrics.cpuMs.toFixed(1)} ms` },
+    { label: "GPU", value: metrics.gpuMs === null ? "n/a" : `${metrics.gpuMs.toFixed(1)} ms` },
+    { label: "GPU Compute", value: metrics.gpuComputeMs === null ? "n/a" : `${metrics.gpuComputeMs.toFixed(1)} ms` },
+    { label: "GPU Render", value: metrics.gpuRenderMs === null ? "n/a" : `${metrics.gpuRenderMs.toFixed(1)} ms` },
     {
       label: "Ocean Upd",
       value: metrics.oceanComputeMs === null ? "n/a" : `${metrics.oceanComputeMs.toFixed(1)} ms`
+    },
+    {
+      label: "Slope Mips",
+      value: metrics.slopeMomentComputeMs === null ? "n/a" : `${metrics.slopeMomentComputeMs.toFixed(2)} ms`
     },
     {
       label: "Boat Wake",
@@ -290,9 +309,19 @@
   </section>
 
   <section class="mt-3 rounded border border-sky-400/25 bg-sky-950/30 p-2">
+    <label class="mb-2 block">
+      <span class="!text-sky-300">Fuente del mar</span>
+      <select
+        value={settings.seaStateControlMode}
+        onchange={(event) => patch({ seaStateControlMode: value(event) as DebugSettings["seaStateControlMode"] })}
+      >
+        <option value="weather">Weather</option>
+        <option value="manual-overrides">Overrides manuales</option>
+      </select>
+    </label>
     <label class="block">
       <span class="!text-sky-300">Estado del mar — Beaufort {settings.beaufort.toFixed(1)}</span>
-      <input min="0" max="12" step="0.1" type="range" value={settings.beaufort} oninput={(event) => patch({ beaufort: numberValue(event) })} />
+      <input disabled={settings.seaStateControlMode === "weather"} min="0" max="12" step="0.1" type="range" value={settings.beaufort} oninput={(event) => patch({ beaufort: numberValue(event) })} />
     </label>
     <p class="mt-1 text-[11px] text-slate-400">{beaufortLabel} · viento {windSpeed.toFixed(1)} m/s</p>
   </section>
@@ -312,15 +341,19 @@
       </label>
       <label>
         <span>Choppiness {settings.choppiness.toFixed(2)}</span>
-        <input min="0" max="2" step="0.01" type="range" value={settings.choppiness} oninput={(event) => patch({ choppiness: numberValue(event) })} />
+        <input min="0" max="1.2" step="0.01" type="range" value={settings.choppiness} oninput={(event) => patch({ choppiness: numberValue(event) })} />
       </label>
       <label>
         <span>Swell {settings.swellAmount.toFixed(2)}</span>
-        <input min="0" max="1" step="0.01" type="range" value={settings.swellAmount} oninput={(event) => patch({ swellAmount: numberValue(event) })} />
+        <input disabled={settings.seaStateControlMode === "weather"} min="0" max="1" step="0.01" type="range" value={settings.swellAmount} oninput={(event) => patch({ swellAmount: numberValue(event) })} />
       </label>
       <label>
         <span>Swell Dir {settings.swellDirectionDeg.toFixed(0)}°</span>
-        <input min="0" max="360" step="1" type="range" value={settings.swellDirectionDeg} oninput={(event) => patch({ swellDirectionDeg: numberValue(event) })} />
+        <input disabled={settings.seaStateControlMode === "weather"} min="0" max="360" step="1" type="range" value={settings.swellDirectionDeg} oninput={(event) => patch({ swellDirectionDeg: numberValue(event) })} />
+      </label>
+      <label>
+        <span>Ocean Seed</span>
+        <input min="0" max="2147483647" step="1" type="number" value={settings.oceanSeed} onchange={(event) => patch({ oceanSeed: numberValue(event) })} />
       </label>
       <label>
         <span>Foam {settings.foamIntensity.toFixed(2)}</span>

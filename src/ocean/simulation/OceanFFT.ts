@@ -26,18 +26,28 @@ import {
   createSpectrumUniforms,
   type SpectrumUniforms
 } from "./OceanSpectrum";
+import { deriveCascadeSeed } from "./OceanMath";
 
 type NodeRef = any;
 
 const TWO_PI = Math.PI * 2;
 
+export type CascadeRole = "swell" | "windSea" | "chop";
+
 export type CascadeConfig = {
-  /** World-space patch size in meters. */
+  index: number;
+  role: CascadeRole;
   patchSize: number;
-  /** Lower bound of the wave-number band covered by this cascade. */
+  resolution: number;
   kMin: number;
-  /** Upper bound of the wave-number band covered by this cascade. */
   kMax: number;
+  lowerCrossover: number | null;
+  upperCrossover: number | null;
+  overlapRatio: number;
+  choppinessScale: number;
+  choppinessLimit: number;
+  representativeWavelength: number;
+  slopeVariance: number;
 };
 
 export type SimulationUniforms = {
@@ -68,6 +78,25 @@ function createFloatOutputTexture(resolution: number, name: string): THREE.Stora
   return texture;
 }
 
+function createFoamOutputTexture(resolution: number, name: string): THREE.StorageTexture {
+  const texture = createFloatOutputTexture(resolution, name);
+  // r16float is a core WebGPU storage format. RGBA16F remains the natural
+  // fallback: changing this format back does not alter the shader contract.
+  texture.format = THREE.RedFormat;
+  return texture;
+}
+
+function createSlopeMomentTexture(resolution: number, name: string): THREE.StorageTexture {
+  const texture = createFloatOutputTexture(resolution, name);
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  // The WebGPU backend performs a box reduction after the level-zero compute
+  // write. Since the texels contain raw moments, linear mip generation is the
+  // exact reduction required for means and second moments.
+  (texture as any).mipmapsAutoUpdate = true;
+  return texture;
+}
+
 /**
  * One FFT cascade: band-limited JONSWAP spectrum, evolved in time and converted
  * to spatial displacement + derivative maps through a Stockham inverse FFT.
@@ -78,16 +107,19 @@ function createFloatOutputTexture(resolution: number, name: string): THREE.Stora
  * - texB.rg: dDy/dz + i*dDx/dx  -> after IFFT: (slopeZ, Jxx)
  * - texB.ba: dDz/dz + i*dDx/dz  -> after IFFT: (Jzz, Jxz)
  *
- * Outputs:
- * - displacement (RGBA16F): (lambda*Dx, Dy, lambda*Dz, jacobian)
- * - derivatives  (RGBA16F): (slopeX', slopeZ', jacobian, foam) with slopes
- *   corrected for horizontal displacement compression.
+ * Outputs keep raw derivatives so the renderer can sum all cascades before
+ * constructing the total displaced-surface tangents and normal.
  */
 export class OceanCascade {
   readonly config: CascadeConfig;
   readonly resolution: number;
   readonly displacementTexture: THREE.StorageTexture;
-  readonly derivativeTextures: [THREE.StorageTexture, THREE.StorageTexture];
+  readonly derivativeTexture0: THREE.StorageTexture;
+  readonly derivativeTexture1: THREE.StorageTexture;
+  readonly foamTextures: [THREE.StorageTexture, THREE.StorageTexture];
+  readonly slopeMomentTexture0: THREE.StorageTexture;
+  readonly slopeMomentTexture1: THREE.StorageTexture;
+  readonly slopeMomentMipCount: number;
 
   private readonly h0Texture: THREE.StorageTexture;
   private readonly spectrumA: [THREE.StorageTexture, THREE.StorageTexture];
@@ -97,14 +129,16 @@ export class OceanCascade {
   private readonly evolvePass: NodeRef;
   private readonly fftPasses: NodeRef[];
   private readonly assemblePasses: [NodeRef, NodeRef];
+  private readonly slopeMomentBasePass: NodeRef;
   private frameParity = 0;
   private spectrumDirty = true;
+  private lastSlopeMomentComputeMs = 0;
 
-  constructor(resolution: number, config: CascadeConfig, uniforms: SimulationUniforms) {
-    this.resolution = resolution;
+  constructor(config: CascadeConfig, uniforms: SimulationUniforms) {
+    this.resolution = config.resolution;
     this.config = config;
 
-    const n = resolution;
+    const n = config.resolution;
     const label = `cascade-${config.patchSize}m`;
 
     this.h0Texture = createSpectrumStorageTexture(n, `${label}-h0`);
@@ -117,9 +151,14 @@ export class OceanCascade {
       createSpectrumStorageTexture(n, `${label}-specB1`)
     ];
     this.displacementTexture = createFloatOutputTexture(n, `${label}-displacement`);
-    this.derivativeTextures = [
-      createFloatOutputTexture(n, `${label}-derivatives0`),
-      createFloatOutputTexture(n, `${label}-derivatives1`)
+    this.derivativeTexture0 = createFloatOutputTexture(n, `${label}-derivatives0`);
+    this.derivativeTexture1 = createFloatOutputTexture(n, `${label}-derivatives1`);
+    this.slopeMomentTexture0 = createSlopeMomentTexture(n, `${label}-slope-moments0`);
+    this.slopeMomentTexture1 = createSlopeMomentTexture(n, `${label}-slope-moments1`);
+    this.slopeMomentMipCount = Math.floor(Math.log2(n)) + 1;
+    this.foamTextures = [
+      createFoamOutputTexture(n, `${label}-foam0`),
+      createFoamOutputTexture(n, `${label}-foam1`)
     ];
 
     this.spectrumUniforms = createSpectrumUniforms();
@@ -127,18 +166,22 @@ export class OceanCascade {
       this.h0Texture,
       n,
       config.patchSize,
-      config.kMin,
-      config.kMax,
+      config,
       this.spectrumUniforms
     );
 
     this.evolvePass = this.createEvolvePass(uniforms);
     this.fftPasses = this.createFFTPasses();
     this.assemblePasses = [this.createAssemblePass(uniforms, 0), this.createAssemblePass(uniforms, 1)];
+    this.slopeMomentBasePass = this.createSlopeMomentBasePass();
   }
 
-  get currentDerivativeTexture(): THREE.StorageTexture {
-    return this.derivativeTextures[this.frameParity];
+  get currentFoamTexture(): THREE.StorageTexture {
+    return this.foamTextures[this.frameParity];
+  }
+
+  get slopeMomentComputeMs(): number {
+    return this.lastSlopeMomentComputeMs;
   }
 
   markSpectrumDirty(): void {
@@ -146,7 +189,7 @@ export class OceanCascade {
   }
 
   applySeaState(params: SeaStateParams): void {
-    applySeaStateToSpectrum(this.spectrumUniforms, params);
+    applySeaStateToSpectrum(this.spectrumUniforms, params, deriveCascadeSeed(params.seed, this.config.index));
   }
 
   update(renderer: THREE.WebGPURenderer): void {
@@ -161,6 +204,9 @@ export class OceanCascade {
       renderer.compute(pass);
     }
     renderer.compute(this.assemblePasses[this.frameParity]);
+    const momentStart = performance.now();
+    renderer.compute(this.slopeMomentBasePass);
+    this.lastSlopeMomentComputeMs = performance.now() - momentStart;
   }
 
   dispose(): void {
@@ -168,7 +214,36 @@ export class OceanCascade {
     this.spectrumA.forEach((texture) => texture.dispose());
     this.spectrumB.forEach((texture) => texture.dispose());
     this.displacementTexture.dispose();
-    this.derivativeTextures.forEach((texture) => texture.dispose());
+    this.derivativeTexture0.dispose();
+    this.derivativeTexture1.dispose();
+    this.slopeMomentTexture0.dispose();
+    this.slopeMomentTexture1.dispose();
+    this.foamTextures.forEach((texture) => texture.dispose());
+  }
+
+  /**
+   * Level zero stores the raw mean and second moments. WebGPU's storage-texture
+   * mip generator performs the remaining 2x2 reductions before shader reads.
+   */
+  private createSlopeMomentBasePass(): NodeRef {
+    const n = this.resolution;
+    const derivatives0 = this.derivativeTexture0;
+    const derivatives1 = this.derivativeTexture1;
+    const target0 = this.slopeMomentTexture0;
+    const target1 = this.slopeMomentTexture1;
+
+    return Fn(() => {
+      const x = instanceIndex.mod(uint(n));
+      const y = instanceIndex.div(uint(n));
+      const texel = uvec2(x, y);
+      const raw0 = textureLoad(derivatives0, texel);
+      const raw1 = textureLoad(derivatives1, texel);
+      const slope = raw0.xy;
+      textureStore(target0, texel, vec4(slope.x, slope.y, slope.x.mul(slope.x), slope.y.mul(slope.y)));
+      // The base level's spare channels keep the horizontal derivatives so the
+      // render material does not need six additional derivative bindings.
+      textureStore(target1, texel, vec4(slope.x.mul(slope.y), raw0.z, raw0.w, raw1.x));
+    })().compute(n * n);
   }
 
   /** Evolves h0 to time t and packs displacement/derivative spectra. */
@@ -316,9 +391,11 @@ export class OceanCascade {
     const n = this.resolution;
     const sourceA = this.spectrumA[0];
     const sourceB = this.spectrumB[0];
-    const previousDerivatives = this.derivativeTextures[1 - parity];
+    const previousFoamTexture = this.foamTextures[1 - parity];
     const displacementTarget = this.displacementTexture;
-    const derivativesTarget = this.derivativeTextures[parity];
+    const derivativesTarget0 = this.derivativeTexture0;
+    const derivativesTarget1 = this.derivativeTexture1;
+    const foamTarget = this.foamTextures[parity];
 
     return Fn(() => {
       const x = instanceIndex.mod(uint(n));
@@ -337,19 +414,17 @@ export class OceanCascade {
       const jzz = resultB.z;
       const jxz = resultB.w;
 
-      const lambda = uniforms.choppiness;
+      const lambda = min(
+        uniforms.choppiness.mul(this.config.choppinessScale),
+        float(this.config.choppinessLimit)
+      );
       const stretchX = jxx.mul(lambda).add(1);
       const stretchZ = jzz.mul(lambda).add(1);
       const shearTerm = jxz.mul(lambda);
       const jacobian = stretchX.mul(stretchZ).sub(shearTerm.mul(shearTerm));
 
-      // Slopes corrected for horizontal compression of the surface. Negative
-      // stretch only happens on overfolded (breaking) crests which end up foamy.
-      const correctedSlopeX = slopeX.div(max(stretchX, float(0.12)));
-      const correctedSlopeZ = slopeZ.div(max(stretchZ, float(0.12)));
-
       const foamSource = uniforms.foamBias.sub(jacobian).mul(uniforms.foamScale).clamp(0, 1);
-      const previousFoam = textureLoad(previousDerivatives, texel).w;
+      const previousFoam = textureLoad(previousFoamTexture, texel).x;
       const decayed = previousFoam.mul(exp(uniforms.foamDecay.negate().mul(uniforms.deltaTime)));
       const foam = min(max(foamSource, decayed), float(1));
 
@@ -358,7 +433,10 @@ export class OceanCascade {
         texel,
         vec4(dispX.mul(lambda), dispY, dispZ.mul(lambda), jacobian)
       );
-      textureStore(derivativesTarget, texel, vec4(correctedSlopeX, correctedSlopeZ, jacobian, foam));
+      textureStore(derivativesTarget0, texel, vec4(slopeX, slopeZ, jxx, jzz));
+      // The spectral model is symmetric, therefore dDx/dz == dDz/dx.
+      textureStore(derivativesTarget1, texel, vec4(jxz, jxz, jacobian, 0));
+      textureStore(foamTarget, texel, vec4(foam, 0, 0, 0));
     })().compute(n * n);
   }
 }
@@ -367,7 +445,7 @@ export function createSimulationUniforms(): SimulationUniforms {
   return {
     time: uniform(0),
     deltaTime: uniform(1 / 60),
-    choppiness: uniform(1.2),
+    choppiness: uniform(0.7),
     foamDecay: uniform(0.28),
     foamBias: uniform(0.62),
     foamScale: uniform(1.9)

@@ -2,15 +2,21 @@ import * as THREE from "three/webgpu";
 import { MeshPhysicalNodeMaterial } from "three/webgpu";
 import {
   Fn,
+  atan,
   cameraPosition,
   color,
+  cos,
+  exp,
   float,
+  log2,
   mix,
   mx_noise_float,
   output,
   positionGeometry,
   positionWorld,
+  sin,
   smoothstep,
+  sqrt,
   step,
   texture,
   transformNormalToView,
@@ -21,9 +27,10 @@ import {
   vertexStage
 } from "three/tsl";
 import type { DebugRenderMode, DebugSettings, EnvironmentState, WeatherState } from "../engine/types";
-import type { CloudShadowMap } from "../atmosphere/clouds/CloudShadowMap";
 import type { BoatWaterInteraction } from "./BoatWaterInteraction";
 import type { OceanSimulation } from "./simulation/OceanSimulation";
+import { microSlopeVarianceForWind } from "./simulation/OceanMath";
+import { beaufortToWindSpeed } from "../state/seaState";
 
 type NodeRef = any;
 
@@ -31,8 +38,7 @@ type OceanRendererOptions = {
   scene: THREE.Scene;
   simulation: OceanSimulation;
   boatInteraction: BoatWaterInteraction | null;
-  /** Projected volumetric cloud shadow map (null disables per-pixel shadows). */
-  cloudShadows: CloudShadowMap | null;
+  cloudShadows: unknown;
 };
 
 type AnyUniform<T> = any & { value: T };
@@ -44,8 +50,12 @@ type OceanUniformNodes = {
   precipitation: AnyUniform<number>;
   turbidity: AnyUniform<number>;
   time: AnyUniform<number>;
-  absorptionColor: AnyUniform<THREE.Color>;
-  scatterColor: AnyUniform<THREE.Color>;
+  projectionScale: AnyUniform<number>;
+  windDirectionXZ: AnyUniform<THREE.Vector2>;
+  windCrossXZ: AnyUniform<THREE.Vector2>;
+  microSlopeVariance: AnyUniform<number>;
+  ambientColor: AnyUniform<THREE.Color>;
+  ambientIntensity: AnyUniform<number>;
   boatInteractionOrigin: AnyUniform<THREE.Vector2>;
   boatInteractionSize: AnyUniform<number>;
   boatInteractionUvTexel: AnyUniform<number>;
@@ -61,8 +71,21 @@ type OceanUniformNodes = {
   debugBoatInteraction: AnyUniform<number>;
   debugJacobian: AnyUniform<number>;
   debugSlope: AnyUniform<number>;
+  debugRawSlope: AnyUniform<number>;
+  debugFilteredSlope: AnyUniform<number>;
+  debugSlopeMip: AnyUniform<number>;
+  debugSlopeVariance: AnyUniform<number>;
+  debugAnisotropy: AnyUniform<number>;
+  debugRoughness: AnyUniform<number>;
+  debugJacobianTerms: AnyUniform<number>;
+  debugGeometryLodWeight: AnyUniform<number>;
+  debugNormalLodWeight: AnyUniform<number>;
+  debugUnresolvedEnergy: AnyUniform<number>;
   debugCascades: AnyUniform<number>;
   debugFresnel: AnyUniform<number>;
+  debugOpticalDepth: AnyUniform<number>;
+  debugWaterVolume: AnyUniform<number>;
+  debugReflectionGlitter: AnyUniform<number>;
 };
 
 const MAX_RADIUS_METERS = 30000;
@@ -78,6 +101,13 @@ function u<T>(value: T): AnyUniform<T> {
 function buildRadialGrid(rings: number, sectors: number, innerRadius: number): THREE.BufferGeometry {
   const vertexCount = 1 + rings * sectors;
   const positions = new Float32Array(vertexCount * 3);
+  const normals = new Float32Array(vertexCount * 3);
+  const tangents = new Float32Array(vertexCount * 4);
+  for (let vertex = 0; vertex < vertexCount; vertex += 1) {
+    normals[vertex * 3 + 1] = 1;
+    tangents[vertex * 4] = 1;
+    tangents[vertex * 4 + 3] = 1;
+  }
   const growth = Math.pow(MAX_RADIUS_METERS / innerRadius, 1 / (rings - 1));
 
   let offset = 3; // vertex 0 is the center
@@ -124,6 +154,8 @@ function buildRadialGrid(rings: number, sectors: number, innerRadius: number): T
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
+  geometry.setAttribute("tangent", new THREE.BufferAttribute(tangents, 4));
   geometry.setIndex(new THREE.BufferAttribute(indices, 1));
   geometry.computeBoundingSphere();
   return geometry;
@@ -132,8 +164,8 @@ function buildRadialGrid(rings: number, sectors: number, innerRadius: number): T
 /**
  * FFT-driven ocean surface with physically based shading: displacement and
  * derivative maps come from the spectral simulation, lighting uses the scene
- * environment (dynamic sky cubemap) plus GGX sun specular and approximate
- * subsurface scattering on wave crests.
+ * environment (dynamic sky cubemap), filtered GGX facets and deep-water
+ * radiance governed by Beer-Lambert extinction.
  */
 export class OceanRenderer {
   private readonly simulation: OceanSimulation;
@@ -142,7 +174,8 @@ export class OceanRenderer {
   private readonly material: MeshPhysicalNodeMaterial;
   private readonly depthMaterial: THREE.NodeMaterial;
   private readonly uniforms: OceanUniformNodes;
-  private readonly derivativeNodes: NodeRef[];
+  private readonly foamNodes: NodeRef[];
+  private readonly slopeVarianceNodes: AnyUniform<number>[];
   private readonly boatInteraction: BoatWaterInteraction | null;
   private readonly boatDynamicsNode: NodeRef | null;
   private readonly boatFoamNode: NodeRef | null;
@@ -155,11 +188,12 @@ export class OceanRenderer {
     const quality = this.simulation.quality;
     this.geometry = buildRadialGrid(quality.meshRings, quality.meshSectors, quality.meshInnerRadius);
 
-    const shader = createWaterMaterial(this.simulation, options.boatInteraction, options.cloudShadows);
+    const shader = createWaterMaterial(this.simulation, options.boatInteraction);
     this.material = shader.material;
     this.depthMaterial = shader.depthMaterial;
     this.uniforms = shader.uniforms;
-    this.derivativeNodes = shader.derivativeNodes;
+    this.foamNodes = shader.foamNodes;
+    this.slopeVarianceNodes = shader.slopeVarianceNodes;
     this.boatDynamicsNode = shader.boatDynamicsNode;
     this.boatFoamNode = shader.boatFoamNode;
 
@@ -187,14 +221,17 @@ export class OceanRenderer {
     environment: EnvironmentState,
     settings: DebugSettings,
     originOffset: { x: number; z: number },
-    timeSeconds: number
+    timeSeconds: number,
+    renderHeightPixels: number
   ): void {
     this.mesh.position.set(camera.position.x, 0, camera.position.z);
     this.mesh.visible = this.visible;
 
-    // Ping-pong: point the material at the derivative maps written this frame.
+    // Foam alone is ping-ponged; raw derivative maps keep stable identities.
     this.simulation.cascades.forEach((cascade, index) => {
-      this.derivativeNodes[index].value = cascade.currentDerivativeTexture;
+      this.foamNodes[index].value = cascade.currentFoamTexture;
+      this.slopeVarianceNodes[index].value = this.simulation.metrics[index]?.slopeVariance
+        ?? cascade.config.slopeVariance;
     });
 
     this.uniforms.worldOffset.value.set(camera.position.x + originOffset.x, camera.position.z + originOffset.z);
@@ -203,8 +240,18 @@ export class OceanRenderer {
     this.uniforms.precipitation.value = weather.precipitation;
     this.uniforms.turbidity.value = settings.waterTurbidity;
     this.uniforms.time.value = timeSeconds;
-    this.uniforms.absorptionColor.value.set(environment.waterAbsorptionColor);
-    this.uniforms.scatterColor.value.set(environment.waterScatterColor);
+    const fovRad = THREE.MathUtils.degToRad((camera as THREE.PerspectiveCamera).fov ?? 60);
+    this.uniforms.projectionScale.value = renderHeightPixels / (2 * Math.tan(fovRad * 0.5));
+    const windX = Math.cos(weather.windDirectionRad);
+    const windZ = Math.sin(weather.windDirectionRad);
+    this.uniforms.windDirectionXZ.value.set(windX, windZ);
+    this.uniforms.windCrossXZ.value.set(-windZ, windX);
+    const effectiveWindSpeed = settings.seaStateControlMode === "manual-overrides"
+      ? beaufortToWindSpeed(settings.beaufort)
+      : weather.windSpeedMs;
+    this.uniforms.microSlopeVariance.value = microSlopeVarianceForWind(effectiveWindSpeed);
+    this.uniforms.ambientColor.value.set(environment.ambientColor);
+    this.uniforms.ambientIntensity.value = environment.ambientIntensity;
     if (this.boatInteraction && this.boatDynamicsNode && this.boatFoamNode) {
       const interaction = this.boatInteraction.sampleState;
       this.boatDynamicsNode.value = interaction.dynamicsTexture;
@@ -247,28 +294,33 @@ export class OceanRenderer {
     this.uniforms.debugBoatInteraction.value = mode === "boatInteraction" ? 1 : 0;
     this.uniforms.debugJacobian.value = mode === "jacobian" ? 1 : 0;
     this.uniforms.debugSlope.value = mode === "slope" ? 1 : 0;
+    this.uniforms.debugRawSlope.value = mode === "rawSlope" ? 1 : 0;
+    this.uniforms.debugFilteredSlope.value = mode === "filteredSlope" ? 1 : 0;
+    this.uniforms.debugSlopeMip.value = mode === "slopeMip" ? 1 : 0;
+    this.uniforms.debugSlopeVariance.value = mode === "slopeVariance" ? 1 : 0;
+    this.uniforms.debugAnisotropy.value = mode === "anisotropy" ? 1 : 0;
+    this.uniforms.debugRoughness.value = mode === "roughness" ? 1 : 0;
+    this.uniforms.debugJacobianTerms.value = mode === "jacobianTerms" ? 1 : 0;
+    this.uniforms.debugGeometryLodWeight.value = mode === "geometryLodWeight" ? 1 : 0;
+    this.uniforms.debugNormalLodWeight.value = mode === "normalLodWeight" ? 1 : 0;
+    this.uniforms.debugUnresolvedEnergy.value = mode === "unresolvedEnergy" ? 1 : 0;
     this.uniforms.debugCascades.value = mode === "cascades" ? 1 : 0;
     this.uniforms.debugFresnel.value = mode === "fresnel" ? 1 : 0;
+    this.uniforms.debugOpticalDepth.value = mode === "opticalDepth" ? 1 : 0;
+    this.uniforms.debugWaterVolume.value = mode === "waterVolume" ? 1 : 0;
+    this.uniforms.debugReflectionGlitter.value = mode === "reflectionGlitter" ? 1 : 0;
   }
-}
-
-/** Per-cascade fade distances, proportional to patch size. */
-function cascadeFades(patchSize: number): { dispEnd: number; normalEnd: number } {
-  return {
-    dispEnd: patchSize * 9,
-    normalEnd: patchSize * 42
-  };
 }
 
 function createWaterMaterial(
   simulation: OceanSimulation,
-  boatInteraction: BoatWaterInteraction | null,
-  cloudShadows: CloudShadowMap | null
+  boatInteraction: BoatWaterInteraction | null
 ): {
   material: MeshPhysicalNodeMaterial;
   depthMaterial: THREE.NodeMaterial;
   uniforms: OceanUniformNodes;
-  derivativeNodes: NodeRef[];
+  foamNodes: NodeRef[];
+  slopeVarianceNodes: AnyUniform<number>[];
   boatDynamicsNode: NodeRef | null;
   boatFoamNode: NodeRef | null;
 } {
@@ -279,8 +331,12 @@ function createWaterMaterial(
     precipitation: u(0),
     turbidity: u(0.25),
     time: u(0),
-    absorptionColor: u(new THREE.Color("#03181f")),
-    scatterColor: u(new THREE.Color("#0e5e52")),
+    projectionScale: u(720),
+    windDirectionXZ: u(new THREE.Vector2(1, 0)),
+    windCrossXZ: u(new THREE.Vector2(0, 1)),
+    microSlopeVariance: u(0.012),
+    ambientColor: u(new THREE.Color("#89a8b8")),
+    ambientIntensity: u(1),
     boatInteractionOrigin: u(new THREE.Vector2()),
     boatInteractionSize: u(1),
     boatInteractionUvTexel: u(1 / 128),
@@ -296,13 +352,29 @@ function createWaterMaterial(
     debugBoatInteraction: u(0),
     debugJacobian: u(0),
     debugSlope: u(0),
+    debugRawSlope: u(0),
+    debugFilteredSlope: u(0),
+    debugSlopeMip: u(0),
+    debugSlopeVariance: u(0),
+    debugAnisotropy: u(0),
+    debugRoughness: u(0),
+    debugJacobianTerms: u(0),
+    debugGeometryLodWeight: u(0),
+    debugNormalLodWeight: u(0),
+    debugUnresolvedEnergy: u(0),
     debugCascades: u(0),
-    debugFresnel: u(0)
+    debugFresnel: u(0),
+    debugOpticalDepth: u(0),
+    debugWaterVolume: u(0),
+    debugReflectionGlitter: u(0)
   };
 
   const cascades = simulation.cascades;
   const displacementNodes = cascades.map((cascade) => texture(cascade.displacementTexture));
-  const derivativeNodes = cascades.map((cascade) => texture(cascade.derivativeTextures[0]));
+  const slopeMoment0Nodes = cascades.map((cascade) => texture(cascade.slopeMomentTexture0));
+  const slopeMoment1Nodes = cascades.map((cascade) => texture(cascade.slopeMomentTexture1));
+  const foamNodes = cascades.map((cascade) => texture(cascade.foamTextures[0]));
+  const slopeVarianceNodes = cascades.map((cascade) => u(cascade.config.slopeVariance));
   const boatDynamicsNode = boatInteraction ? texture(boatInteraction.currentDynamicsTexture) : null;
   const boatFoamNode = boatInteraction ? texture(boatInteraction.currentFoamTexture) : null;
 
@@ -340,15 +412,24 @@ function createWaterMaterial(
 
   // ------------------------------------------------------------------ vertex
   const sampleXZ = positionGeometry.xz.add(uniforms.worldOffset);
-  const cameraDistance = positionGeometry.xz.length();
+  // The mesh follows camera XZ, so positionGeometry.xz is the horizontal
+  // separation. Altitude must still participate or aerial views retain all
+  // high-frequency geometry as if the camera were on the water surface.
+  const cameraDistance = sqrt(
+    positionGeometry.x.mul(positionGeometry.x)
+      .add(positionGeometry.z.mul(positionGeometry.z))
+      .add(cameraPosition.y.mul(cameraPosition.y))
+  );
 
   let displacement: NodeRef = vec3(0, 0, 0);
   cascades.forEach((cascade, index) => {
-    const fades = cascadeFades(cascade.config.patchSize);
     const uv = sampleXZ.div(cascade.config.patchSize);
-    const fade = float(1).sub(smoothstep(float(fades.dispEnd * 0.55), float(fades.dispEnd), cameraDistance));
+    const projectedPixels = float(cascade.config.representativeWavelength)
+      .mul(uniforms.projectionScale)
+      .div(cameraDistance.max(0.01));
+    const geometryWeight = smoothstep(float(2), float(4), projectedPixels);
     const sampleNode = (displacementNodes[index] as any).sample(uv).level(float(0));
-    displacement = displacement.add(sampleNode.xyz.mul(fade));
+    displacement = displacement.add(sampleNode.xyz.mul(geometryWeight));
   });
   displacement = displacement.mul(uniforms.displacementToggle);
   const boatInteractionVertex = sampleBoatDynamics(sampleXZ);
@@ -375,27 +456,85 @@ function createWaterMaterial(
   const vBoatInteractionMask: NodeRef = vertexStage(boatInteractionMask);
 
   // ---------------------------------------------------------------- fragment
-  let slope: NodeRef = vec2(0, 0);
+  let rawSlope: NodeRef = vec2(0, 0);
+  let filteredSlope: NodeRef = vec2(0, 0);
+  let dXdX: NodeRef = float(0);
+  let dXdZ: NodeRef = float(0);
+  let dZdX: NodeRef = float(0);
+  let dZdZ: NodeRef = float(0);
   let foamRaw: NodeRef = float(0);
-  let jacobianMin: NodeRef = float(1);
-  let roughnessBoost: NodeRef = float(0);
+  let varianceX: NodeRef = float(0);
+  let varianceZ: NodeRef = float(0);
+  let covarianceXZ: NodeRef = float(0);
+  let selectedMip: NodeRef = float(0);
+  let geometryLodWeight: NodeRef = float(0);
+  let normalLodWeight: NodeRef = float(0);
+  let jacobianTermsDebug: NodeRef = vec3(0, 0, 0);
   let cascadeDebug: NodeRef = vec3(0, 0, 0);
 
   cascades.forEach((cascade, index) => {
-    const fades = cascadeFades(cascade.config.patchSize);
     const uv = vSampleXZ.div(cascade.config.patchSize);
-    const derivatives = (derivativeNodes[index] as any).sample(uv);
-    const fade = float(1).sub(smoothstep(float(fades.normalEnd * 0.4), float(fades.normalEnd), vDistance));
+    const momentBase0 = (slopeMoment0Nodes[index] as any).sample(uv).level(float(0));
+    const momentBase1 = (slopeMoment1Nodes[index] as any).sample(uv).level(float(0));
+    const foam = (foamNodes[index] as any).sample(uv).level(float(0));
+    const projectedPixels = float(cascade.config.representativeWavelength)
+      .mul(uniforms.projectionScale)
+      .div(vDistance.max(0.01));
+    const geometryWeight = smoothstep(float(2), float(4), projectedPixels);
+    const normalWeight = smoothstep(float(0.75), float(2), projectedPixels);
+    const unresolved = float(1).sub(normalWeight);
+    const footprintX = uv.dFdx().mul(cascade.config.resolution).length();
+    const footprintY = uv.dFdy().mul(cascade.config.resolution).length();
+    const momentMip = log2(footprintX.max(footprintY).max(1))
+      .clamp(0, cascade.slopeMomentMipCount - 1);
+    const moments0 = (slopeMoment0Nodes[index] as any).sample(uv).level(momentMip);
+    const moments1 = (slopeMoment1Nodes[index] as any).sample(uv).level(momentMip);
+    const meanSlope = moments0.xy;
+    const localVarianceX = moments0.z.sub(moments0.x.mul(moments0.x)).max(0);
+    const localVarianceZ = moments0.w.sub(moments0.y.mul(moments0.y)).max(0);
+    const localCovariance = moments1.x.sub(moments0.x.mul(moments0.y));
+    const lambda = simulation.uniforms.choppiness
+      .mul(cascade.config.choppinessScale)
+      .clamp(0, cascade.config.choppinessLimit);
 
-    slope = slope.add(derivatives.xy.mul(fade));
-    foamRaw = foamRaw.max(derivatives.w.mul(fade.mul(0.4).add(0.6)));
-    jacobianMin = jacobianMin.min(derivatives.z.mul(fade).add(float(1).sub(fade)));
-    // Detail lost at distance becomes micro-roughness (specular anti-aliasing)
-    roughnessBoost = roughnessBoost.add(float(1).sub(fade).mul(index === 0 ? 0.02 : index === 1 ? 0.05 : 0.08));
+    rawSlope = rawSlope.add(momentBase0.xy.mul(normalWeight));
+    filteredSlope = filteredSlope.add(meanSlope.mul(normalWeight));
+    // Horizontal Jacobian terms must follow the displaced geometry. Keeping
+    // choppy derivatives after geometry has faded creates an oily folded normal.
+    dXdX = dXdX.add(momentBase1.y.mul(lambda).mul(geometryWeight));
+    dZdZ = dZdZ.add(momentBase1.z.mul(lambda).mul(geometryWeight));
+    dXdZ = dXdZ.add(momentBase1.w.mul(lambda).mul(geometryWeight));
+    dZdX = dZdX.add(momentBase1.w.mul(lambda).mul(geometryWeight));
+    foamRaw = foamRaw.max(foam.x.mul(normalWeight.mul(0.4).add(0.6)));
+    varianceX = varianceX.add(localVarianceX).add(unresolved.mul(slopeVarianceNodes[index]).mul(0.5));
+    varianceZ = varianceZ.add(localVarianceZ).add(unresolved.mul(slopeVarianceNodes[index]).mul(0.5));
+    covarianceXZ = covarianceXZ.add(localCovariance);
+    selectedMip = selectedMip.add(momentMip.div(Math.max(cascade.slopeMomentMipCount - 1, 1)).div(cascades.length));
+    geometryLodWeight = geometryLodWeight.add(geometryWeight.div(cascades.length));
+    normalLodWeight = normalLodWeight.add(normalWeight.div(cascades.length));
+    jacobianTermsDebug = jacobianTermsDebug.add(
+      vec3(momentBase1.y.abs(), momentBase1.w.abs(), momentBase1.z.abs()).mul(geometryWeight.div(cascades.length))
+    );
 
     const channel = [vec3(1, 0, 0), vec3(0, 1, 0), vec3(0, 0, 1)][index] as NodeRef;
-    cascadeDebug = cascadeDebug.add(channel.mul(derivatives.xy.length().mul(fade)));
+    cascadeDebug = cascadeDebug.add(channel.mul(momentBase0.xy.length().mul(normalWeight)));
   });
+
+  let slope: NodeRef = filteredSlope;
+
+  // Cox-Munk energy is a statistical facet distribution. It belongs entirely
+  // in the covariance/BRDF and must never become a coherent normal-map stripe.
+  const coxWindVariance = uniforms.microSlopeVariance.mul(0.65);
+  const coxCrossVariance = uniforms.microSlopeVariance.mul(0.35);
+  varianceX = varianceX
+    .add(uniforms.windDirectionXZ.x.mul(uniforms.windDirectionXZ.x).mul(coxWindVariance))
+    .add(uniforms.windCrossXZ.x.mul(uniforms.windCrossXZ.x).mul(coxCrossVariance));
+  varianceZ = varianceZ
+    .add(uniforms.windDirectionXZ.y.mul(uniforms.windDirectionXZ.y).mul(coxWindVariance))
+    .add(uniforms.windCrossXZ.y.mul(uniforms.windCrossXZ.y).mul(coxCrossVariance));
+  covarianceXZ = covarianceXZ
+    .add(uniforms.windDirectionXZ.x.mul(uniforms.windDirectionXZ.y).mul(coxWindVariance))
+    .add(uniforms.windCrossXZ.x.mul(uniforms.windCrossXZ.y).mul(coxCrossVariance));
 
   // Rain ripples: fast animated high-frequency normal perturbation
   const rippleStrength = uniforms.precipitation.mul(0.16);
@@ -416,7 +555,10 @@ function createWaterMaterial(
   );
   slope = slope.add(interactionSlope.mul(uniforms.displacementToggle));
 
-  const worldNormal = vec3(slope.x.negate(), 1, slope.y.negate()).normalize();
+  const tangentX = vec3(float(1).add(dXdX), slope.x, dZdX);
+  const tangentZ = vec3(dXdZ, slope.y, float(1).add(dZdZ));
+  const worldNormal = tangentZ.cross(tangentX).normalize();
+  const jacobianTotal = float(1).add(dXdX).mul(float(1).add(dZdZ)).sub(dXdZ.mul(dZdX));
 
   // Foam: temporal accumulation from the simulation plus separate boat sources.
   const boatFoam = sampleBoatFoam(vSampleXZ);
@@ -437,48 +579,87 @@ function createWaterMaterial(
   const foamBlend = smoothstep(float(0.12), float(0.62), oceanFoamAmount)
     .max(smoothstep(float(0.055), float(0.46), boatFoamAmount));
 
-  // Water body color: dark absorption base, brighter scatter on crests/turbidity
-  const crestLift = vHeight.mul(0.5).add(0.5).clamp(0, 1);
-  const scatterAmount = crestLift.mul(0.36).add(uniforms.turbidity.mul(0.3)).clamp(0, 1);
-  const waterAlbedo = mix(uniforms.absorptionColor, uniforms.scatterColor, scatterAmount);
-  const foamColor = color("#e8f4f6");
+  const foamColor = color("#dbe7e7");
 
-  material.colorNode = mix(waterAlbedo, foamColor, foamBlend);
+  // The water body has no diffuse blue paint. Its visible energy is the GGX
+  // environment/sun reflection plus the deep-water volume below.
+  material.colorNode = foamColor.mul(foamBlend);
   material.normalNode = transformNormalToView(worldNormal);
 
-  const baseRoughness = float(0.045)
-    .add(roughnessBoost)
-    .add(uniforms.precipitation.mul(0.06))
-    .add(foamBlend.mul(0.5));
-  material.roughnessNode = baseRoughness.clamp(0.02, 0.95);
+  const normalDx = worldNormal.dFdx();
+  const normalDy = worldNormal.dFdy();
+  const screenVariance = normalDx.dot(normalDx)
+    .add(normalDy.dot(normalDy))
+    .mul(0.25)
+    .clamp(0, 0.08);
+  const rainVariance = uniforms.precipitation.mul(0.015);
+  const totalVariance = varianceX.add(varianceZ).mul(0.5)
+    .add(screenVariance)
+    .add(rainVariance)
+    .max(0);
+  const alphaSquared = float(Math.pow(0.08 * 0.08, 2)).add(totalVariance.mul(0.22));
+  const waterRoughness = alphaSquared.pow(0.25).clamp(0.08, 0.48);
+  material.roughnessNode = mix(waterRoughness, float(0.72), foamBlend);
 
-  // Approximate subsurface scattering: sunlight transmitted through wave crests
-  // when looking toward the sun, strongest for tall thin waves. Modulated by
-  // the projected volumetric cloud shadow so patches of shade kill the glow.
-  const viewDir = cameraPosition.sub(positionWorld).normalize();
-  const towardSun = viewDir.negate().dot(uniforms.sunDirection).max(0);
-  const crest = vHeight.mul(0.32).add(0.08).max(0);
-  const cloudShadowFactor: NodeRef = cloudShadows
-    ? cloudShadows.sampleShadow(positionWorld.xz)
-    : float(1);
-  const sss = towardSun
-    .pow(3)
-    .mul(crest)
-    .mul(uniforms.sunVisibility)
-    .mul(uniforms.sunDirectMask)
-    .mul(cloudShadowFactor);
-  const sssAmbient = crest
-    .mul(0.06)
-    .mul(uniforms.sunVisibility)
-    .mul(uniforms.sunDirectMask)
-    .mul(cloudShadowFactor.mul(0.6).add(0.4));
-  material.emissiveNode = uniforms.scatterColor
-    .mul(uniforms.sunColor)
-    .mul(sss.mul(1.35).add(sssAmbient))
+  const covarianceTrace = varianceX.add(varianceZ);
+  const covarianceDelta = varianceX.sub(varianceZ);
+  const covarianceDiscriminant = sqrt(
+    covarianceDelta.mul(covarianceDelta).add(covarianceXZ.mul(covarianceXZ).mul(4)).max(0)
+  );
+  const lambdaMax = covarianceTrace.add(covarianceDiscriminant).mul(0.5).max(0);
+  const lambdaMin = covarianceTrace.sub(covarianceDiscriminant).mul(0.5).max(0);
+  const anisotropyStrength = float(1)
+    .sub(sqrt(lambdaMin.add(0.0001).div(lambdaMax.add(0.0001))))
+    .clamp(0, 0.65)
     .mul(float(1).sub(foamBlend));
+  const anisotropyAngle = atan(covarianceXZ.mul(2), covarianceDelta).mul(0.5);
+  const anisotropyDirection = vec2(cos(anisotropyAngle), sin(anisotropyAngle));
+  material.anisotropyNode = anisotropyDirection.mul(anisotropyStrength);
+  material.specularIntensityNode = mix(float(1), float(0.35), foamBlend);
+
+  // ATLANTIC_DEEP: Snell refraction, Beer-Lambert extinction and single-scatter
+  // upwelling. Fresnel reflection itself remains in MeshPhysicalNodeMaterial.
+  const viewDir = cameraPosition.sub(positionWorld).normalize();
+  const cosIncident = worldNormal.dot(viewDir).max(0.001).clamp(0, 1);
+  const f0 = float(0.02037);
+  const fresnel = f0.add(float(1).sub(f0).mul(float(1).sub(cosIncident).pow(5))).clamp(0, 1);
+  const eta = float(1 / 1.333);
+  const sinTransmittedSquared = float(1).sub(cosIncident.mul(cosIncident)).mul(eta.mul(eta));
+  const cosTransmitted = sqrt(float(1).sub(sinTransmittedSquared).max(0.0001));
+  const absorption = mix(
+    vec3(0.32, 0.075, 0.028),
+    vec3(0.42, 0.14, 0.065),
+    uniforms.turbidity
+  );
+  const scattering = mix(
+    vec3(0.006, 0.018, 0.032),
+    vec3(0.028, 0.065, 0.052),
+    uniforms.turbidity
+  );
+  const effectiveDepth = mix(float(10), float(4), uniforms.turbidity);
+  const opticalPath = effectiveDepth.div(cosTransmitted.max(0.15));
+  const extinction = absorption.add(scattering);
+  const transmittance = exp(extinction.mul(opticalPath).negate());
+  const scatteringAlbedo = scattering.div(extinction.max(0.0001));
+  const ambientRadiance = uniforms.ambientColor.mul(uniforms.ambientIntensity);
+  const waterVolume = ambientRadiance
+    .mul(scatteringAlbedo)
+    .mul(vec3(1, 1, 1).sub(transmittance))
+    .mul(0.55);
+  const volumeContribution = waterVolume
+    .mul(float(1).sub(fresnel))
+    .mul(float(1).sub(foamBlend));
+  material.emissiveNode = volumeContribution;
+
+  const sunHalf = viewDir.add(uniforms.sunDirection).normalize();
+  const glitterExponent = mix(float(18), float(300), float(1).sub(waterRoughness));
+  const reflectionGlitter = worldNormal.dot(sunHalf).max(0).pow(glitterExponent)
+    .mul(fresnel)
+    .mul(uniforms.sunVisibility)
+    .mul(uniforms.sunDirectMask);
 
   // ------------------------------------------------------------- debug views
-  const fresnelDebug = float(1).sub(worldNormal.dot(viewDir).max(0)).pow(5).clamp(0, 1);
+  const fresnelDebug = fresnel;
   const debugColor = Fn(() => {
     let result: NodeRef = vec3(0, 0, 0);
     const heightVis = vHeight.mul(0.14).add(0.5).clamp(0, 1);
@@ -491,12 +672,39 @@ function createWaterMaterial(
       .mul(vBoatInteractionMask)
       .add(vec3(boatFoam.r, boatFoam.g, boatFoam.b).mul(0.7));
     result = result.add(boatInteractionDebug.mul(uniforms.debugBoatInteraction));
-    const jacobianVis = jacobianMin.mul(0.5).clamp(0, 1);
+    const jacobianVis = jacobianTotal.mul(0.5).clamp(0, 1);
     result = result.add(vec3(float(1).sub(jacobianVis), jacobianVis, jacobianVis.mul(0.4)).mul(uniforms.debugJacobian));
     const slopeVis = slope.length().mul(1.4).clamp(0, 1);
     result = result.add(vec3(slopeVis, slopeVis.mul(0.6), slopeVis.mul(0.2)).mul(uniforms.debugSlope));
+    const rawSlopeVis = rawSlope.length().mul(1.4).clamp(0, 1);
+    result = result.add(vec3(rawSlopeVis, rawSlopeVis.mul(0.6), rawSlopeVis.mul(0.2)).mul(uniforms.debugRawSlope));
+    const filteredSlopeVis = filteredSlope.length().mul(1.4).clamp(0, 1);
+    result = result.add(vec3(filteredSlopeVis.mul(0.2), filteredSlopeVis.mul(0.75), filteredSlopeVis)
+      .mul(uniforms.debugFilteredSlope));
+    result = result.add(vec3(selectedMip, selectedMip.mul(0.25), float(1).sub(selectedMip))
+      .mul(uniforms.debugSlopeMip));
+    const varianceVis = sqrt(totalVariance).mul(3).clamp(0, 1);
+    result = result.add(vec3(varianceVis, varianceVis.mul(0.45), float(1).sub(varianceVis))
+      .mul(uniforms.debugSlopeVariance));
+    const anisotropyVis = vec3(
+      anisotropyDirection.x.mul(0.5).add(0.5),
+      anisotropyStrength,
+      anisotropyDirection.y.mul(0.5).add(0.5)
+    );
+    result = result.add(anisotropyVis.mul(uniforms.debugAnisotropy));
+    result = result.add(vec3(waterRoughness).mul(uniforms.debugRoughness));
+    result = result.add(jacobianTermsDebug.mul(2).clamp(0, 1).mul(uniforms.debugJacobianTerms));
+    result = result.add(vec3(geometryLodWeight).mul(uniforms.debugGeometryLodWeight));
+    result = result.add(vec3(normalLodWeight).mul(uniforms.debugNormalLodWeight));
+    const unresolvedVis = sqrt(totalVariance).mul(3).clamp(0, 1);
+    result = result.add(vec3(unresolvedVis, unresolvedVis.mul(0.45), 0).mul(uniforms.debugUnresolvedEnergy));
     result = result.add(cascadeDebug.mul(2).clamp(0, 1).mul(uniforms.debugCascades));
     result = result.add(vec3(fresnelDebug, fresnelDebug, fresnelDebug).mul(uniforms.debugFresnel));
+    const opticalDepthVis = opticalPath.div(24).clamp(0, 1);
+    result = result.add(vec3(opticalDepthVis, opticalDepthVis.mul(0.55), float(1).sub(opticalDepthVis))
+      .mul(uniforms.debugOpticalDepth));
+    result = result.add(waterVolume.mul(5).clamp(0, 1).mul(uniforms.debugWaterVolume));
+    result = result.add(vec3(reflectionGlitter).mul(uniforms.debugReflectionGlitter));
     return result;
   })();
 
@@ -506,10 +714,31 @@ function createWaterMaterial(
     .add(uniforms.debugBoatInteraction)
     .add(uniforms.debugJacobian)
     .add(uniforms.debugSlope)
+    .add(uniforms.debugRawSlope)
+    .add(uniforms.debugFilteredSlope)
+    .add(uniforms.debugSlopeMip)
+    .add(uniforms.debugSlopeVariance)
+    .add(uniforms.debugAnisotropy)
+    .add(uniforms.debugRoughness)
+    .add(uniforms.debugJacobianTerms)
+    .add(uniforms.debugGeometryLodWeight)
+    .add(uniforms.debugNormalLodWeight)
+    .add(uniforms.debugUnresolvedEnergy)
     .add(uniforms.debugCascades)
     .add(uniforms.debugFresnel)
+    .add(uniforms.debugOpticalDepth)
+    .add(uniforms.debugWaterVolume)
+    .add(uniforms.debugReflectionGlitter)
     .clamp(0, 1);
   material.outputNode = mix(output, vec4(debugColor, 1), debugBlend);
 
-  return { material, depthMaterial, uniforms, derivativeNodes, boatDynamicsNode, boatFoamNode };
+  return {
+    material,
+    depthMaterial,
+    uniforms,
+    foamNodes,
+    slopeVarianceNodes,
+    boatDynamicsNode,
+    boatFoamNode
+  };
 }

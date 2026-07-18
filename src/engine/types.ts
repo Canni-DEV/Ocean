@@ -27,8 +27,23 @@ export type DebugRenderMode =
   | "boatInteraction"
   | "jacobian"
   | "slope"
+  | "rawSlope"
+  | "filteredSlope"
+  | "slopeMip"
+  | "slopeVariance"
+  | "anisotropy"
+  | "roughness"
+  | "jacobianTerms"
+  | "geometryLodWeight"
+  | "normalLodWeight"
+  | "unresolvedEnergy"
   | "cascades"
-  | "fresnel";
+  | "fresnel"
+  | "opticalDepth"
+  | "waterVolume"
+  | "reflectionGlitter";
+
+export type SeaStateControlMode = "weather" | "manual-overrides";
 
 export type WeatherState = {
   windDirectionRad: number;
@@ -130,10 +145,19 @@ export type EngineMetrics = {
   frameMs: number;
   cpuMs: number;
   gpuMs: number | null;
+  gpuComputeMs: number | null;
+  gpuRenderMs: number | null;
   oceanComputeMs: number | null;
+  slopeMomentComputeMs: number | null;
   cloudComputeMs: number | null;
   depthPrepassMs: number | null;
   boatInteractionComputeMs: number | null;
+  oceanSpectrum: Array<{
+    energy: number;
+    heightVariance: number;
+    slopeVariance: number;
+    correlation: number;
+  }>;
   seaLevelAtCameraM: number | null;
   worldTimeHours: number;
   camera: CameraDebugState;
@@ -159,6 +183,10 @@ export type DebugSettings = {
   timeScale: number;
   /** Master sea state control, Beaufort scale 0-12. */
   beaufort: number;
+  /** Weather owns wind/swell unless explicit manual overrides are enabled. */
+  seaStateControlMode: SeaStateControlMode;
+  /** Stable world seed used to derive statistically independent cascade seeds. */
+  oceanSeed: number;
   showSky: boolean;
   showOcean: boolean;
   oceanDisplacement: boolean;
