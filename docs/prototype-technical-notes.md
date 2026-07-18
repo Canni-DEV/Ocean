@@ -36,7 +36,7 @@ This prototype is intentionally WebGPU-only. It should fail with a clear message
 
 ## Ocean validation harness
 
-Use `?oceanValidation=<scenario>&foam=0|1&seed=<number>&quality=high|medium|low` to load a fixed validation state. PR6B adds deterministic `lights=work,flashlight,cabin,navigation,anchor`, `lightning=weather|off|fixed`, `debugOcean=<renderMode>` and slow camera pan scenarios. Runtime metrics and spectrum estimates are exposed as `window.__oceanValidation`. `npm run test:visual` executes the Playwright matrix and `npm run capture:ocean-pr6b` records Edge/WebGPU PNG+JSON candidates at `2560×1440`.
+Use `?oceanValidation=<scenario>&foam=0|1&seed=<number>&quality=high|medium|low` to load a fixed validation state. PR6B adds deterministic `lights=work,flashlight,cabin,navigation,anchor`, `lightning=weather|off|fixed`, `debugOcean=<renderMode>` and slow camera pan scenarios. PR6B.6 also adds `hour=<0..24>`, `anisotropy=0|1` and `slopeMip=auto|0..12` for reproducible artifact isolation. Runtime metrics and spectrum estimates are exposed as `window.__oceanValidation`. `npm run test:visual` executes the Playwright matrix and `npm run capture:ocean-pr6b` records Edge/WebGPU PNG+JSON candidates at `2560×1440`.
 
 ## PR6B direct ocean lighting
 
@@ -44,6 +44,7 @@ Use `?oceanValidation=<scenario>&foam=0|1&seed=<number>&quality=high|medium|low`
 - High/Medium use 2048/1024 spotlight shadows for the boat work light and flashlight. Low keeps all lighting contributions but disables local shadow maps.
 - `ATLANTIC_DEEP` is the single typed optics profile. Debug overrides are bounded and resettable; no optical colors remain in `EnvironmentState`.
 - Direct-light debug modes expose local specular/volume, roles, sun/moon glitter, ambient volume, foam lighting, luminance and clipping.
+- PR6B.6 uses the normalized anisotropic GGX distribution, clamps filtered covariance to the PSD cone and derives anisotropy only when eigenvalue separation and slope energy provide a stable orientation. Moment-mip variance is not added a second time from cascade statistics.
 - **Physics sampling** (`OceanPhysicsSampler.ts`): compute pass evaluates the exact displacement cascades on a 64x64 grid around the camera and reads it back asynchronously (1-2 frame latency, no stall). Public API: `getHeightAt(x, z)`, `getNormalAt(x, z)`, `isReady()`, with horizontal-displacement compensation. The HUD "Sea Level" metric is fed by it.
 - **Fishing rope** (`src/fishing/`): Verlet particle chain anchored at the bow pulley with a terminal weight, reel-controlled paid-out length (1-50 m, default 2 m), hull BVH collision, and ocean height sampling for submerged nodes (inherits the sampler's 1-2 frame latency). Visualized as a configurable thick tube or line mesh.
 

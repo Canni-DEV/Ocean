@@ -22,10 +22,14 @@ export type OceanValidationScenario = {
   cameraMotion: ValidationCameraMotion;
   debugView: DebugRenderMode;
   quality: QualityTier;
+  anisotropyEnabled: boolean;
+  slopeMipOverride: number;
 };
 
-type ScenarioInput = Omit<OceanValidationScenario, "lights" | "lightning" | "cameraMotion" | "debugView" | "quality"> &
-  Partial<Pick<OceanValidationScenario, "lights" | "lightning" | "cameraMotion" | "debugView" | "quality">>;
+type DefaultedScenarioField = "lights" | "lightning" | "cameraMotion" | "debugView" | "quality" |
+  "anisotropyEnabled" | "slopeMipOverride";
+type ScenarioInput = Omit<OceanValidationScenario, DefaultedScenarioField> &
+  Partial<Pick<OceanValidationScenario, DefaultedScenarioField>>;
 
 const LIGHTS_OFF: ValidationLightState = Object.freeze({
   work: false,
@@ -43,7 +47,9 @@ function scenario(input: ScenarioInput): OceanValidationScenario {
     lightning: input.lightning ?? "off",
     cameraMotion: input.cameraMotion ?? "static",
     debugView: input.debugView ?? "final",
-    quality: input.quality ?? "high"
+    quality: input.quality ?? "high",
+    anisotropyEnabled: input.anisotropyEnabled ?? true,
+    slopeMipOverride: input.slopeMipOverride ?? -1
   };
 }
 
@@ -115,12 +121,15 @@ export function readOceanValidationScenario(search: string): OceanValidationScen
   if (!base) throw new Error(`Unknown ocean validation scenario: ${id}`);
   return {
     ...base,
+    worldTimeHours: parseWorldHour(params.get("hour"), base.worldTimeHours),
     foam: params.get("foam") === null ? base.foam : params.get("foam") !== "0",
     seed: parseFinite(params.get("seed"), base.seed),
     lightning: parseLightningOverride(params.get("lightning"), base.lightning),
     lights: parseLights(params.get("lights"), base.lights),
     debugView: parseOceanDebugView(params.get("debugOcean"), base.debugView),
-    quality: parseQuality(params.get("quality"), base.quality)
+    quality: parseQuality(params.get("quality"), base.quality),
+    anisotropyEnabled: parseBoolean(params.get("anisotropy"), base.anisotropyEnabled),
+    slopeMipOverride: parseSlopeMipOverride(params.get("slopeMip"), base.slopeMipOverride)
   };
 }
 
@@ -140,6 +149,8 @@ export function applyOceanValidationSettings(
     oceanSeed: current.seed,
     showFoam: current.foam,
     renderMode: current.debugView,
+    oceanAnisotropyEnabled: current.anisotropyEnabled,
+    oceanSlopeMipOverride: current.slopeMipOverride,
     boatLightsOn: current.lights.work,
     lightningOverride: current.lightning,
     boatWaterInteraction: false,
@@ -181,6 +192,24 @@ function parseFinite(raw: string | null, fallback: number): number {
   if (raw === null) return fallback;
   const value = Number(raw);
   return Number.isFinite(value) ? value : fallback;
+}
+
+function parseWorldHour(raw: string | null, fallback: number): number {
+  const value = parseFinite(raw, fallback);
+  return Math.min(24, Math.max(0, value));
+}
+
+function parseBoolean(raw: string | null, fallback: boolean): boolean {
+  if (raw === null) return fallback;
+  if (raw === "1" || raw === "true" || raw === "on") return true;
+  if (raw === "0" || raw === "false" || raw === "off") return false;
+  return fallback;
+}
+
+function parseSlopeMipOverride(raw: string | null, fallback: number): number {
+  if (raw === null || raw === "auto") return raw === "auto" ? -1 : fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) ? Math.min(12, Math.max(0, value)) : fallback;
 }
 
 function parseLightningOverride(raw: string | null, fallback: LightningOverride): LightningOverride {

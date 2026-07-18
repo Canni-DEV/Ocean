@@ -77,7 +77,9 @@ export function anisotropicGgx(inputs: GgxInputs): number {
   const vx = alphaB * inputs.dotTH;
   const vy = alphaT * inputs.dotBH;
   const vz = a2 * dotNH;
-  const distribution = a2 / Math.max(EPSILON, PI * (vx * vx + vy * vy + vz * vz) ** 2);
+  const vectorLengthSquared = Math.max(Number.EPSILON, vx * vx + vy * vy + vz * vz);
+  const distributionRatio = a2 / vectorLengthSquared;
+  const distribution = a2 * distributionRatio * distributionRatio / PI;
   const gv = dotNL * Math.hypot(alphaT * inputs.dotTV, alphaB * inputs.dotBV, dotNV);
   const gl = dotNV * Math.hypot(alphaT * inputs.dotTL, alphaB * inputs.dotBL, dotNL);
   const visibility = 0.5 / Math.max(EPSILON, gv + gl);

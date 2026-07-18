@@ -117,7 +117,9 @@
       oceanNightUpwellingGain: ATLANTIC_DEEP.upwellingNight,
       oceanSunGlitterGain: ATLANTIC_DEEP.sunGlitterGain,
       oceanMoonGlitterGain: ATLANTIC_DEEP.moonGlitterGain,
-      oceanLocalOpticalPathM: ATLANTIC_DEEP.localOpticalPathM
+      oceanLocalOpticalPathM: ATLANTIC_DEEP.localOpticalPathM,
+      oceanAnisotropyEnabled: true,
+      oceanSlopeMipOverride: -1
     });
   }
 
@@ -129,7 +131,9 @@
       nightUpwellingGain: settings.oceanNightUpwellingGain,
       sunGlitterGain: settings.oceanSunGlitterGain,
       moonGlitterGain: settings.oceanMoonGlitterGain,
-      localOpticalPathM: settings.oceanLocalOpticalPathM
+      localOpticalPathM: settings.oceanLocalOpticalPathM,
+      anisotropyEnabled: settings.oceanAnisotropyEnabled,
+      slopeMipOverride: settings.oceanSlopeMipOverride
     };
     await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
     opticsCopied = true;
@@ -434,6 +438,21 @@
       <label>
         <span>Local Path {settings.oceanLocalOpticalPathM.toFixed(1)} m</span>
         <input min={OCEAN_OPTICS_OVERRIDE_LIMITS.localOpticalPathM[0]} max={OCEAN_OPTICS_OVERRIDE_LIMITS.localOpticalPathM[1]} step="0.1" type="range" value={settings.oceanLocalOpticalPathM} oninput={(event) => patch({ oceanLocalOpticalPathM: numberValue(event) })} />
+      </label>
+      <label>
+        <span>Anisotropy diagnostic</span>
+        <input type="checkbox" checked={settings.oceanAnisotropyEnabled} onchange={(event) => patch({ oceanAnisotropyEnabled: (event.currentTarget as HTMLInputElement).checked })} />
+      </label>
+      <label>
+        <span>Slope mip diagnostic</span>
+        <select value={settings.oceanSlopeMipOverride} onchange={(event) => patch({ oceanSlopeMipOverride: numberValue(event) })}>
+          <option value="-1">Auto</option>
+          <option value="0">Mip 0</option>
+          <option value="1">Mip 1</option>
+          <option value="2">Mip 2</option>
+          <option value="3">Mip 3</option>
+          <option value="4">Mip 4</option>
+        </select>
       </label>
       <div class="col-span-2 flex gap-2">
         <button class="flex-1 rounded border border-cyan-200/20 bg-cyan-200/10 px-2 py-1 text-[10px] uppercase text-cyan-100 hover:bg-cyan-200/20" type="button" onclick={resetOceanOptics}>Reset Atlantic</button>

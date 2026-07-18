@@ -17,7 +17,9 @@ describe("ocean validation harness", () => {
   });
 
   it("applies deterministic settings and query overrides", () => {
-    const scenario = readOceanValidationScenario("?oceanValidation=bow-high&foam=0&seed=99&quality=medium");
+    const scenario = readOceanValidationScenario(
+      "?oceanValidation=bow-high&foam=0&seed=99&quality=medium&hour=7.05&anisotropy=0&slopeMip=0"
+    );
     expect(scenario).not.toBeNull();
     const settings = applyOceanValidationSettings(DEFAULT_DEBUG_SETTINGS, scenario!);
     expect(settings).toMatchObject({
@@ -25,8 +27,11 @@ describe("ocean validation harness", () => {
       weatherPreset: "clear",
       beaufort: 8,
       oceanSeed: 99,
+      worldTimeHours: 7.05,
       showFoam: false,
-      seaStateControlMode: "manual-overrides"
+      seaStateControlMode: "manual-overrides",
+      oceanAnisotropyEnabled: false,
+      oceanSlopeMipOverride: 0
     });
   });
 

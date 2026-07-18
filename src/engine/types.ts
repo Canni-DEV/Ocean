@@ -221,6 +221,10 @@ export type DebugSettings = {
   oceanSunGlitterGain: number;
   oceanMoonGlitterGain: number;
   oceanLocalOpticalPathM: number;
+  /** PR6B diagnostic: disables covariance-driven anisotropy without changing waves. */
+  oceanAnisotropyEnabled: boolean;
+  /** PR6B diagnostic: -1 selects projected mip automatically, otherwise fixes a mip level. */
+  oceanSlopeMipOverride: number;
   lightningOverride: LightningOverride;
   cloudCoverageBias: number;
   cloudDensityBias: number;

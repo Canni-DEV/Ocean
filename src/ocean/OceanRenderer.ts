@@ -72,6 +72,8 @@ type OceanUniformNodes = {
   moonGlitterGain: AnyUniform<number>;
   localOpticalPathM: AnyUniform<number>;
   iblGain: AnyUniform<number>;
+  anisotropyEnabled: AnyUniform<number>;
+  slopeMipOverride: AnyUniform<number>;
   boatInteractionOrigin: AnyUniform<THREE.Vector2>;
   boatInteractionSize: AnyUniform<number>;
   boatInteractionUvTexel: AnyUniform<number>;
@@ -195,7 +197,6 @@ export class OceanRenderer {
   private readonly depthMaterial: THREE.NodeMaterial;
   private readonly uniforms: OceanUniformNodes;
   private readonly foamNodes: NodeRef[];
-  private readonly slopeVarianceNodes: AnyUniform<number>[];
   private readonly boatInteraction: BoatWaterInteraction | null;
   private readonly boatDynamicsNode: NodeRef | null;
   private readonly boatFoamNode: NodeRef | null;
@@ -216,7 +217,6 @@ export class OceanRenderer {
     this.depthMaterial = shader.depthMaterial;
     this.uniforms = shader.uniforms;
     this.foamNodes = shader.foamNodes;
-    this.slopeVarianceNodes = shader.slopeVarianceNodes;
     this.boatDynamicsNode = shader.boatDynamicsNode;
     this.boatFoamNode = shader.boatFoamNode;
 
@@ -235,6 +235,8 @@ export class OceanRenderer {
     this.visible = settings.showOcean;
     this.mesh.visible = this.visible;
     this.material.wireframe = settings.wireframe || settings.renderMode === "wireframe";
+    this.uniforms.anisotropyEnabled.value = settings.oceanAnisotropyEnabled ? 1 : 0;
+    this.uniforms.slopeMipOverride.value = settings.oceanSlopeMipOverride;
     this.setDebugMode(settings.renderMode);
   }
 
@@ -253,8 +255,6 @@ export class OceanRenderer {
     // Foam alone is ping-ponged; raw derivative maps keep stable identities.
     this.simulation.cascades.forEach((cascade, index) => {
       this.foamNodes[index].value = cascade.currentFoamTexture;
-      this.slopeVarianceNodes[index].value = this.simulation.metrics[index]?.slopeVariance
-        ?? cascade.config.slopeVariance;
     });
 
     this.uniforms.worldOffset.value.set(camera.position.x + originOffset.x, camera.position.z + originOffset.z);
@@ -350,7 +350,6 @@ function createWaterMaterial(
   depthMaterial: THREE.NodeMaterial;
   uniforms: OceanUniformNodes;
   foamNodes: NodeRef[];
-  slopeVarianceNodes: AnyUniform<number>[];
   boatDynamicsNode: NodeRef | null;
   boatFoamNode: NodeRef | null;
 } {
@@ -375,6 +374,8 @@ function createWaterMaterial(
     moonGlitterGain: u(1),
     localOpticalPathM: u(ATLANTIC_DEEP.localOpticalPathM),
     iblGain: u(1),
+    anisotropyEnabled: u(1),
+    slopeMipOverride: u(-1),
     boatInteractionOrigin: u(new THREE.Vector2()),
     boatInteractionSize: u(1),
     boatInteractionUvTexel: u(1 / 128),
@@ -416,7 +417,6 @@ function createWaterMaterial(
   const slopeMoment0Nodes = cascades.map((cascade) => texture(cascade.slopeMomentTexture0));
   const slopeMoment1Nodes = cascades.map((cascade) => texture(cascade.slopeMomentTexture1));
   const foamNodes = cascades.map((cascade) => texture(cascade.foamTextures[0]));
-  const slopeVarianceNodes = cascades.map((cascade) => u(cascade.config.slopeVariance));
   const boatDynamicsNode = boatInteraction ? texture(boatInteraction.currentDynamicsTexture) : null;
   const boatFoamNode = boatInteraction ? texture(boatInteraction.currentFoamTexture) : null;
 
@@ -508,6 +508,7 @@ function createWaterMaterial(
   let varianceX: NodeRef = float(0);
   let varianceZ: NodeRef = float(0);
   let covarianceXZ: NodeRef = float(0);
+  let unresolvedSlopeVariance: NodeRef = float(0);
   let selectedMip: NodeRef = float(0);
   let geometryLodWeight: NodeRef = float(0);
   let normalLodWeight: NodeRef = float(0);
@@ -524,11 +525,16 @@ function createWaterMaterial(
       .div(vDistance.max(0.01));
     const geometryWeight = smoothstep(float(2), float(4), projectedPixels);
     const normalWeight = smoothstep(float(0.75), float(2), projectedPixels);
-    const unresolved = float(1).sub(normalWeight);
     const footprintX = uv.dFdx().mul(cascade.config.resolution).length();
     const footprintY = uv.dFdy().mul(cascade.config.resolution).length();
-    const momentMip = log2(footprintX.max(footprintY).max(1))
+    const automaticMomentMip = log2(footprintX.max(footprintY).max(1))
       .clamp(0, cascade.slopeMomentMipCount - 1);
+    const overrideEnabled = step(float(0), uniforms.slopeMipOverride);
+    const momentMip = mix(
+      automaticMomentMip,
+      uniforms.slopeMipOverride.clamp(0, cascade.slopeMomentMipCount - 1),
+      overrideEnabled
+    );
     const moments0 = (slopeMoment0Nodes[index] as any).sample(uv).level(momentMip);
     const moments1 = (slopeMoment1Nodes[index] as any).sample(uv).level(momentMip);
     const meanSlope = moments0.xy;
@@ -548,9 +554,13 @@ function createWaterMaterial(
     dXdZ = dXdZ.add(momentBase1.w.mul(lambda).mul(geometryWeight));
     dZdX = dZdX.add(momentBase1.w.mul(lambda).mul(geometryWeight));
     foamRaw = foamRaw.max(foam.x.mul(normalWeight.mul(0.4).add(0.6)));
-    varianceX = varianceX.add(localVarianceX).add(unresolved.mul(slopeVarianceNodes[index]).mul(0.5));
-    varianceZ = varianceZ.add(localVarianceZ).add(unresolved.mul(slopeVarianceNodes[index]).mul(0.5));
+    // The selected moment mip already stores both the mean slope and the
+    // second moment over its complete texel footprint. Adding the cascade's
+    // global slope variance here counted the same filtered energy twice.
+    varianceX = varianceX.add(localVarianceX);
+    varianceZ = varianceZ.add(localVarianceZ);
     covarianceXZ = covarianceXZ.add(localCovariance);
+    unresolvedSlopeVariance = unresolvedSlopeVariance.add(localVarianceX.add(localVarianceZ).mul(0.5));
     selectedMip = selectedMip.add(momentMip.div(Math.max(cascade.slopeMomentMipCount - 1, 1)).div(cascades.length));
     geometryLodWeight = geometryLodWeight.add(geometryWeight.div(cascades.length));
     normalLodWeight = normalLodWeight.add(normalWeight.div(cascades.length));
@@ -577,6 +587,14 @@ function createWaterMaterial(
   covarianceXZ = covarianceXZ
     .add(uniforms.windDirectionXZ.x.mul(uniforms.windDirectionXZ.y).mul(coxWindVariance))
     .add(uniforms.windCrossXZ.x.mul(uniforms.windCrossXZ.y).mul(coxCrossVariance));
+
+  // Half-float moment reduction and interpolation can move covariance a few
+  // ulps outside the positive-semidefinite cone. Project it back before the
+  // eigendecomposition so its orientation cannot explode or flip on a texel.
+  varianceX = varianceX.max(0);
+  varianceZ = varianceZ.max(0);
+  const covarianceLimit = sqrt(varianceX.mul(varianceZ)).max(0);
+  covarianceXZ = covarianceXZ.clamp(covarianceLimit.negate(), covarianceLimit);
 
   // Rain ripples: fast animated high-frequency normal perturbation
   const rippleStrength = uniforms.precipitation.mul(0.16);
@@ -649,11 +667,13 @@ function createWaterMaterial(
   const covarianceDiscriminant = sqrt(
     covarianceDelta.mul(covarianceDelta).add(covarianceXZ.mul(covarianceXZ).mul(4)).max(0)
   );
-  const lambdaMax = covarianceTrace.add(covarianceDiscriminant).mul(0.5).max(0);
-  const lambdaMin = covarianceTrace.sub(covarianceDiscriminant).mul(0.5).max(0);
-  const anisotropyStrength = float(1)
-    .sub(sqrt(lambdaMin.add(0.0001).div(lambdaMax.add(0.0001))))
+  const eigenSeparation = covarianceDiscriminant.div(covarianceTrace.add(0.0001)).clamp(0, 1);
+  const orientationConfidence = smoothstep(float(0.08), float(0.28), eigenSeparation)
+    .mul(smoothstep(float(0.0015), float(0.012), covarianceTrace));
+  const anisotropyStrength: NodeRef = eigenSeparation
+    .mul(orientationConfidence)
     .clamp(0, 0.65)
+    .mul(uniforms.anisotropyEnabled)
     .mul(float(1).sub(foamBlend));
   const anisotropyAngle = atan(covarianceXZ.mul(2), covarianceDelta).mul(0.5);
   const anisotropyDirection = vec2(cos(anisotropyAngle), sin(anisotropyAngle));
@@ -757,7 +777,7 @@ function createWaterMaterial(
     result = result.add(jacobianTermsDebug.mul(2).clamp(0, 1).mul(uniforms.debugJacobianTerms));
     result = result.add(vec3(geometryLodWeight).mul(uniforms.debugGeometryLodWeight));
     result = result.add(vec3(normalLodWeight).mul(uniforms.debugNormalLodWeight));
-    const unresolvedVis = sqrt(totalVariance).mul(3).clamp(0, 1);
+    const unresolvedVis = sqrt(unresolvedSlopeVariance).mul(3).clamp(0, 1);
     result = result.add(vec3(unresolvedVis, unresolvedVis.mul(0.45), 0).mul(uniforms.debugUnresolvedEnergy));
     result = result.add(cascadeDebug.mul(2).clamp(0, 1).mul(uniforms.debugCascades));
     result = result.add(vec3(fresnelDebug, fresnelDebug, fresnelDebug).mul(uniforms.debugFresnel));
@@ -821,7 +841,6 @@ function createWaterMaterial(
     depthMaterial,
     uniforms,
     foamNodes,
-    slopeVarianceNodes,
     boatDynamicsNode,
     boatFoamNode
   };

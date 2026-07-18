@@ -36,8 +36,11 @@ export const ATLANTIC_DEEP: Readonly<OceanOpticsProfile> = Object.freeze({
   upwellingNight: 0.75,
   nightIblIntensity: 0.015,
   dayIblIntensity: 0.2,
-  sunGlitterGain: 0.035,
-  moonGlitterGain: 0.51,
+  // Unit gains keep celestial energy in the shared scene lights. The previous
+  // 0.035/0.51 values compensated for an unnormalised GGX distribution and
+  // must not remain as hidden, water-only light calibration.
+  sunGlitterGain: 1,
+  moonGlitterGain: 1,
   localPhaseG: 0.55,
   localOpticalPathM: 6,
   localScatterGain: 1,

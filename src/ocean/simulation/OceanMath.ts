@@ -127,6 +127,31 @@ export function slopeCovarianceEigenvalues(covariance: SlopeCovariance): [number
   return [Math.max(0, (trace + discriminant) * 0.5), Math.max(0, (trace - discriminant) * 0.5)];
 }
 
+export function projectSlopeCovariancePsd(covariance: SlopeCovariance): SlopeCovariance {
+  const varianceX = Math.max(0, covariance.varianceX);
+  const varianceZ = Math.max(0, covariance.varianceZ);
+  const limit = Math.sqrt(varianceX * varianceZ);
+  return {
+    varianceX,
+    varianceZ,
+    covarianceXZ: Math.min(limit, Math.max(-limit, covariance.covarianceXZ))
+  };
+}
+
+export function stableSlopeAnisotropy(covariance: SlopeCovariance): number {
+  const projected = projectSlopeCovariancePsd(covariance);
+  const trace = projected.varianceX + projected.varianceZ;
+  const delta = projected.varianceX - projected.varianceZ;
+  const discriminant = Math.sqrt(Math.max(0, delta * delta + 4 * projected.covarianceXZ ** 2));
+  const separation = Math.min(1, Math.max(0, discriminant / (trace + 0.0001)));
+  const smoothstep = (edge0: number, edge1: number, value: number): number => {
+    const t = Math.min(1, Math.max(0, (value - edge0) / (edge1 - edge0)));
+    return t * t * (3 - 2 * t);
+  };
+  const confidence = smoothstep(0.08, 0.28, separation) * smoothstep(0.0015, 0.012, trace);
+  return Math.min(0.65, separation * confidence);
+}
+
 export function projectedMomentMip(texelFootprintPixels: number, maxMip: number): number {
   return Math.min(maxMip, Math.max(0, Math.log2(Math.max(texelFootprintPixels, 1))));
 }

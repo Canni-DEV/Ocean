@@ -86,6 +86,69 @@ describe("PR6B optical references", () => {
     expect(forward).toBeGreaterThanOrEqual(0);
     expect(reciprocal).toBeCloseTo(forward, 10);
   });
+
+  it("matches the closed-form anisotropic GGX value at normal incidence", () => {
+    const alphaT = 0.08;
+    const alphaB = 0.16;
+    const actual = anisotropicGgx({
+      dotNL: 1,
+      dotNV: 1,
+      dotNH: 1,
+      dotVH: 1,
+      dotTL: 0,
+      dotTV: 0,
+      dotTH: 0,
+      dotBL: 0,
+      dotBV: 0,
+      dotBH: 0,
+      alphaT,
+      alphaB
+    });
+    // At L=V=N: D=1/(PI*alphaT*alphaB), V=1/4 and F=F0.
+    const expected = waterF0() / (4 * Math.PI * alphaT * alphaB);
+    expect(actual).toBeCloseTo(expected, 10);
+  });
+
+  it("conserves directional energy when numerically integrated over the hemisphere", () => {
+    const thetaSteps = 96;
+    const phiSteps = 192;
+    const dTheta = (Math.PI * 0.5) / thetaSteps;
+    const dPhi = (Math.PI * 2) / phiSteps;
+    let reflectedEnergy = 0;
+
+    for (let thetaIndex = 0; thetaIndex < thetaSteps; thetaIndex += 1) {
+      const theta = (thetaIndex + 0.5) * dTheta;
+      const sinTheta = Math.sin(theta);
+      const cosTheta = Math.cos(theta);
+      for (let phiIndex = 0; phiIndex < phiSteps; phiIndex += 1) {
+        const phi = (phiIndex + 0.5) * dPhi;
+        const lightX = sinTheta * Math.cos(phi);
+        const lightY = sinTheta * Math.sin(phi);
+        const halfLength = Math.hypot(lightX, lightY, cosTheta + 1);
+        const halfX = lightX / halfLength;
+        const halfY = lightY / halfLength;
+        const halfZ = (cosTheta + 1) / halfLength;
+        const brdf = anisotropicGgx({
+          dotNL: cosTheta,
+          dotNV: 1,
+          dotNH: halfZ,
+          dotVH: halfZ,
+          dotTL: lightX,
+          dotTV: 0,
+          dotTH: halfX,
+          dotBL: lightY,
+          dotBV: 0,
+          dotBH: halfY,
+          alphaT: 0.06,
+          alphaB: 0.18
+        });
+        reflectedEnergy += brdf * cosTheta * sinTheta * dTheta * dPhi;
+      }
+    }
+
+    expect(reflectedEnergy).toBeGreaterThan(0);
+    expect(reflectedEnergy).toBeLessThanOrEqual(1.001);
+  });
 });
 
 describe("ocean light roles and profile", () => {
@@ -107,5 +170,10 @@ describe("ocean light roles and profile", () => {
     expect(clampOceanOpticsOverride(-10, OCEAN_OPTICS_OVERRIDE_LIMITS.phaseG)).toBe(0);
     expect(clampOceanOpticsOverride(10, OCEAN_OPTICS_OVERRIDE_LIMITS.phaseG)).toBe(0.85);
     expect(clampOceanOpticsOverride(Number.NaN, OCEAN_OPTICS_OVERRIDE_LIMITS.localOpticalPathM)).toBe(1);
+  });
+
+  it("does not hide celestial calibration in water-only default gains", () => {
+    expect(ATLANTIC_DEEP.sunGlitterGain).toBe(1);
+    expect(ATLANTIC_DEEP.moonGlitterGain).toBe(1);
   });
 });

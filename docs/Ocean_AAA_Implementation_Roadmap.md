@@ -49,7 +49,7 @@ con el barco todavía no forman un sistema óptico completo.
 ### 4.1 Salud del proyecto
 
 - [x] `npm run typecheck`: 0 errores y 0 warnings el 2026-07-18.
-- [x] `npm run test:run`: 62 pruebas aprobadas el 2026-07-18.
+- [x] `npm run test:run`: 67 pruebas aprobadas el 2026-07-18.
 - [x] Registrar referencias de línea base y candidatos PR6B con seed `1337`.
 - [ ] Registrar p50/p95 GPU y CPU de la línea base en High a `2560x1440`.
 - [ ] Ejecutar prueba sostenida de 30 minutos.
@@ -77,7 +77,7 @@ con el barco todavía no forman un sistema óptico completo.
 | 3 | PR3 — LOD espectral provisional | Parcial | Menos shimmering | PR4B |
 | 4 | PR4 — Slope moments | Parcial | Roughness filtrada | PR6B |
 | 5 | PR6A — Óptica Atlántico base | Parcial | Fresnel y volumen base | PR6B |
-| 6 | **PR6B — Luces locales, noche y glitter** | **Candidate implementado; pendiente perf/soak y aprobación visual** | Interacción luminosa convincente | PR6C |
+| 6 | **PR6B — Luces locales, noche y glitter** | **Reabierta: PR6B.6 estabilización implementada; pendiente inspección visual** | Interacción luminosa convincente | PR6C |
 | 7 | PR6C — SSR, refracción, contacto y horizonte | Pendiente | Integración con escena | PR7/PR8 |
 | 8 | PR4B — Microescala y LOD definitivo | Pendiente | Detalle cercano estable | PR5/PR7 |
 | 9 | PR5 — `PhysicalSeaState` | Pendiente | Mar físicamente controlable | PR7 |
@@ -479,10 +479,17 @@ Todos con seed `1337`, tiempo de simulación fijo y espuma on/off cuando corresp
 
 ### 7.17 Estado de entrega PR6B
 
-**Candidate técnico generado el 2026-07-18.** Typecheck, build y 62 pruebas
-Vitest están verdes. La matriz Playwright se ejecutó en Edge/WebGPU; High produjo
-PNG y JSON a `2560×1440` en [`validation/pr6b/candidate`](./validation/pr6b/candidate/).
-Medium y Low superaron el smoke de compilación del lighting model.
+**Candidate anterior invalidado visualmente el 2026-07-18.** Las inspecciones en
+amanecer y noche revelaron clipping solar/lunar y estructura rectangular. La
+auditoría encontró una distribución GGX anisotrópica sin normalizar; la referencia
+CPU repetía la misma expresión y producía un falso positivo. PR6B.6 corrige la
+normalización, añade integración hemisférica independiente, elimina doble conteo
+de slope variance, proyecta covarianza al cono PSD y suprime orientación
+anisotrópica de baja confianza.
+
+El harness acepta ahora `hour=<0..24>`, `anisotropy=0|1` y
+`slopeMip=auto|0..12`. Estos controles son únicamente diagnósticos y no cambian
+FFT, fases, desplazamiento, física ni generación de espuma.
 
 Pendientes para declarar la PR cerrada:
 
@@ -492,6 +499,8 @@ Pendientes para declarar la PR cerrada:
 - [ ] 600 frames tras warm-up, A/B del agua y registro de adapter/driver.
 - [ ] Soak de 30 minutos y control de heap/recursos GPU.
 - [ ] Medición temporal del paneo contra la baseline previa a PR4/PR6.
+- [ ] Inspección humana de las horas reportadas `7.05`, `7.92`, `18.15` y
+  `19.54`, con espuma on/off y comparativas anisotropía/mip.
 
 ## 8. PR6C — SSR, refracción, contacto y horizonte
 

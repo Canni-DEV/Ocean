@@ -11,11 +11,13 @@ import {
   pearsonCorrelation,
   projectedWavelengthPixels,
   projectedMomentMip,
+  projectSlopeCovariancePsd,
   reduceSlopeMoments,
   refractedCosine,
   roughnessFromSlopeVariance,
   slopeCovarianceEigenvalues,
   slopeMoments,
+  stableSlopeAnisotropy,
   spectralLodWeights,
 } from "./OceanMath";
 
@@ -76,6 +78,20 @@ describe("ocean math", () => {
     expect(major).toBeCloseTo(2, 12);
     expect(minor).toBeCloseTo(0.5, 12);
     expect(minor).toBeGreaterThanOrEqual(0);
+  });
+
+  it("projects half-float covariance error back into the PSD cone", () => {
+    const projected = projectSlopeCovariancePsd({ varianceX: 0.01, varianceZ: 0.04, covarianceXZ: 0.2 });
+    expect(projected.covarianceXZ).toBeCloseTo(0.02, 12);
+    const [, minor] = slopeCovarianceEigenvalues(projected);
+    expect(minor).toBeGreaterThanOrEqual(0);
+  });
+
+  it("suppresses unstable anisotropy for isotropic or nearly flat moments", () => {
+    expect(stableSlopeAnisotropy({ varianceX: 0.01, varianceZ: 0.01, covarianceXZ: 0 })).toBe(0);
+    expect(stableSlopeAnisotropy({ varianceX: 1e-6, varianceZ: 0, covarianceXZ: 0 })).toBe(0);
+    expect(stableSlopeAnisotropy({ varianceX: 0.05, varianceZ: 0.005, covarianceXZ: 0 }))
+      .toBeGreaterThan(0.3);
   });
 
   it("preserves mean and second moments through a complete mip reduction", () => {

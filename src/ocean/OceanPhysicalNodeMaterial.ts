@@ -78,9 +78,13 @@ function oceanGgx(
     alphaTValue.mul(dotBH),
     alphaProduct.mul(dotNH)
   );
-  const distribution = alphaProduct.div(
-    distributionVector.dot(distributionVector).pow(2).mul(Math.PI).max(1e-6)
-  );
+  // Filament's normalized anisotropic GGX distribution. The numerator is
+  // (alphaT * alphaB)^3, not merely alphaT * alphaB. Omitting the other two
+  // factors makes narrow lobes gain orders of magnitude of energy and was the
+  // source of the fully white solar/lunar ocean reported after PR6B.
+  const distributionLengthSquared = distributionVector.dot(distributionVector).max(1e-12);
+  const distributionRatio = alphaProduct.div(distributionLengthSquared);
+  const distribution = alphaProduct.mul(distributionRatio.pow(2)).mul(1 / Math.PI);
   const visibilityV = dotNL.mul((vec3 as any)(alphaTValue.mul(dotTV), alphaB.mul(dotBV), dotNV).length());
   const visibilityL = dotNV.mul((vec3 as any)(alphaTValue.mul(dotTL), alphaB.mul(dotBL), dotNL).length());
   const visibility = float(0.5).div(visibilityV.add(visibilityL).max(1e-6));

@@ -38,6 +38,8 @@ export const DEFAULT_DEBUG_SETTINGS: DebugSettings = {
   oceanSunGlitterGain: ATLANTIC_DEEP.sunGlitterGain,
   oceanMoonGlitterGain: ATLANTIC_DEEP.moonGlitterGain,
   oceanLocalOpticalPathM: 6,
+  oceanAnisotropyEnabled: true,
+  oceanSlopeMipOverride: -1,
   lightningOverride: "weather",
   cloudCoverageBias: 0,
   cloudDensityBias: 0,
