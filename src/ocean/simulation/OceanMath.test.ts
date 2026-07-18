@@ -17,7 +17,7 @@ import {
   roughnessFromSlopeVariance,
   slopeCovarianceEigenvalues,
   slopeMoments,
-  stableSlopeAnisotropy,
+  windAlignedAnisotropyStrength,
   spectralLodWeights,
 } from "./OceanMath";
 
@@ -87,11 +87,11 @@ describe("ocean math", () => {
     expect(minor).toBeGreaterThanOrEqual(0);
   });
 
-  it("suppresses unstable anisotropy for isotropic or nearly flat moments", () => {
-    expect(stableSlopeAnisotropy({ varianceX: 0.01, varianceZ: 0.01, covarianceXZ: 0 })).toBe(0);
-    expect(stableSlopeAnisotropy({ varianceX: 1e-6, varianceZ: 0, covarianceXZ: 0 })).toBe(0);
-    expect(stableSlopeAnisotropy({ varianceX: 0.05, varianceZ: 0.005, covarianceXZ: 0 }))
-      .toBeGreaterThan(0.3);
+  it("keeps wind-aligned anisotropy stable, subtle and monotonic", () => {
+    expect(windAlignedAnisotropyStrength(0.004)).toBe(0);
+    expect(windAlignedAnisotropyStrength(0.02)).toBeGreaterThan(0);
+    expect(windAlignedAnisotropyStrength(0.04)).toBeCloseTo(0.036, 12);
+    expect(windAlignedAnisotropyStrength(1)).toBeLessThanOrEqual(0.04);
   });
 
   it("preserves mean and second moments through a complete mip reduction", () => {

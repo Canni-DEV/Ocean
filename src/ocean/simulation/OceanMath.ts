@@ -138,18 +138,12 @@ export function projectSlopeCovariancePsd(covariance: SlopeCovariance): SlopeCov
   };
 }
 
-export function stableSlopeAnisotropy(covariance: SlopeCovariance): number {
-  const projected = projectSlopeCovariancePsd(covariance);
-  const trace = projected.varianceX + projected.varianceZ;
-  const delta = projected.varianceX - projected.varianceZ;
-  const discriminant = Math.sqrt(Math.max(0, delta * delta + 4 * projected.covarianceXZ ** 2));
-  const separation = Math.min(1, Math.max(0, discriminant / (trace + 0.0001)));
-  const smoothstep = (edge0: number, edge1: number, value: number): number => {
-    const t = Math.min(1, Math.max(0, (value - edge0) / (edge1 - edge0)));
-    return t * t * (3 - 2 * t);
-  };
-  const confidence = smoothstep(0.08, 0.28, separation) * smoothstep(0.0015, 0.012, trace);
-  return Math.min(0.65, separation * confidence);
+export function windAlignedAnisotropyStrength(microSlopeVariance: number): number {
+  const confidence = smoothstep01((Math.max(0, microSlopeVariance) - 0.006) / (0.04 - 0.006));
+  // Cox-Munk directional split used by the renderer: 65% along wind, 35%
+  // across wind. Keep the resulting lobe deliberately subtle.
+  const directionality = (0.65 - 0.35) / (0.65 + 0.35);
+  return Math.min(0.04, directionality * confidence * 0.12);
 }
 
 export function projectedMomentMip(texelFootprintPixels: number, maxMip: number): number {

@@ -44,7 +44,7 @@ Use `?oceanValidation=<scenario>&foam=0|1&seed=<number>&quality=high|medium|low`
 - High/Medium use 2048/1024 spotlight shadows for the boat work light and flashlight. Low keeps all lighting contributions but disables local shadow maps.
 - `ATLANTIC_DEEP` is the single typed optics profile. Debug overrides are bounded and resettable; no optical colors remain in `EnvironmentState`.
 - Direct-light debug modes expose local specular/volume, roles, sun/moon glitter, ambient volume, foam lighting, luminance and clipping.
-- PR6B.6 uses the normalized anisotropic GGX distribution, clamps filtered covariance to the PSD cone and derives anisotropy only when eigenvalue separation and slope energy provide a stable orientation. Moment-mip variance is not added a second time from cascade statistics.
+- PR6B.6 uses the normalized anisotropic GGX distribution. Moment-mip variance controls isotropic roughness and is not added a second time from cascade statistics; anisotropy uses a subtle world-stable Cox–Munk wind frame instead of a stochastic per-texel covariance eigenvector.
 - **Physics sampling** (`OceanPhysicsSampler.ts`): compute pass evaluates the exact displacement cascades on a 64x64 grid around the camera and reads it back asynchronously (1-2 frame latency, no stall). Public API: `getHeightAt(x, z)`, `getNormalAt(x, z)`, `isReady()`, with horizontal-displacement compensation. The HUD "Sea Level" metric is fed by it.
 - **Fishing rope** (`src/fishing/`): Verlet particle chain anchored at the bow pulley with a terminal weight, reel-controlled paid-out length (1-50 m, default 2 m), hull BVH collision, and ocean height sampling for submerged nodes (inherits the sampler's 1-2 frame latency). Visualized as a configurable thick tube or line mesh.
 

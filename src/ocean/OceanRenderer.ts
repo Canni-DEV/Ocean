@@ -1,10 +1,8 @@
 import * as THREE from "three/webgpu";
 import {
   Fn,
-  atan,
   cameraPosition,
   color,
-  cos,
   exp,
   float,
   log2,
@@ -13,7 +11,6 @@ import {
   output,
   positionGeometry,
   positionWorld,
-  sin,
   smoothstep,
   sqrt,
   step,
@@ -507,7 +504,6 @@ function createWaterMaterial(
   let foamRaw: NodeRef = float(0);
   let varianceX: NodeRef = float(0);
   let varianceZ: NodeRef = float(0);
-  let covarianceXZ: NodeRef = float(0);
   let unresolvedSlopeVariance: NodeRef = float(0);
   let selectedMip: NodeRef = float(0);
   let geometryLodWeight: NodeRef = float(0);
@@ -536,11 +532,9 @@ function createWaterMaterial(
       overrideEnabled
     );
     const moments0 = (slopeMoment0Nodes[index] as any).sample(uv).level(momentMip);
-    const moments1 = (slopeMoment1Nodes[index] as any).sample(uv).level(momentMip);
     const meanSlope = moments0.xy;
     const localVarianceX = moments0.z.sub(moments0.x.mul(moments0.x)).max(0);
     const localVarianceZ = moments0.w.sub(moments0.y.mul(moments0.y)).max(0);
-    const localCovariance = moments1.x.sub(moments0.x.mul(moments0.y));
     const lambda = simulation.uniforms.choppiness
       .mul(cascade.config.choppinessScale)
       .clamp(0, cascade.config.choppinessLimit);
@@ -559,7 +553,6 @@ function createWaterMaterial(
     // global slope variance here counted the same filtered energy twice.
     varianceX = varianceX.add(localVarianceX);
     varianceZ = varianceZ.add(localVarianceZ);
-    covarianceXZ = covarianceXZ.add(localCovariance);
     unresolvedSlopeVariance = unresolvedSlopeVariance.add(localVarianceX.add(localVarianceZ).mul(0.5));
     selectedMip = selectedMip.add(momentMip.div(Math.max(cascade.slopeMomentMipCount - 1, 1)).div(cascades.length));
     geometryLodWeight = geometryLodWeight.add(geometryWeight.div(cascades.length));
@@ -584,17 +577,13 @@ function createWaterMaterial(
   varianceZ = varianceZ
     .add(uniforms.windDirectionXZ.y.mul(uniforms.windDirectionXZ.y).mul(coxWindVariance))
     .add(uniforms.windCrossXZ.y.mul(uniforms.windCrossXZ.y).mul(coxCrossVariance));
-  covarianceXZ = covarianceXZ
-    .add(uniforms.windDirectionXZ.x.mul(uniforms.windDirectionXZ.y).mul(coxWindVariance))
-    .add(uniforms.windCrossXZ.x.mul(uniforms.windCrossXZ.y).mul(coxCrossVariance));
-
-  // Half-float moment reduction and interpolation can move covariance a few
-  // ulps outside the positive-semidefinite cone. Project it back before the
-  // eigendecomposition so its orientation cannot explode or flip on a texel.
+  // Moment variance remains spatially filtered for roughness, but its local
+  // eigenvector must not drive material anisotropy: bilinear interpolation of
+  // E[sx], E[sz] and second moments produces texel-sized orientation changes
+  // that appear as rectangular reflection patches. Keep the variances
+  // non-negative and use the statistically stable wind frame below.
   varianceX = varianceX.max(0);
   varianceZ = varianceZ.max(0);
-  const covarianceLimit = sqrt(varianceX.mul(varianceZ)).max(0);
-  covarianceXZ = covarianceXZ.clamp(covarianceLimit.negate(), covarianceLimit);
 
   // Rain ripples: fast animated high-frequency normal perturbation
   const rippleStrength = uniforms.precipitation.mul(0.16);
@@ -662,21 +651,19 @@ function createWaterMaterial(
     .clamp(ATLANTIC_DEEP.waterRoughnessMin, ATLANTIC_DEEP.waterRoughnessMax);
   material.roughnessNode = mix(waterRoughness, float(ATLANTIC_DEEP.foamRoughness), foamBlend);
 
-  const covarianceTrace = varianceX.add(varianceZ);
-  const covarianceDelta = varianceX.sub(varianceZ);
-  const covarianceDiscriminant = sqrt(
-    covarianceDelta.mul(covarianceDelta).add(covarianceXZ.mul(covarianceXZ).mul(4)).max(0)
-  );
-  const eigenSeparation = covarianceDiscriminant.div(covarianceTrace.add(0.0001)).clamp(0, 1);
-  const orientationConfidence = smoothstep(float(0.08), float(0.28), eigenSeparation)
-    .mul(smoothstep(float(0.0015), float(0.012), covarianceTrace));
-  const anisotropyStrength: NodeRef = eigenSeparation
-    .mul(orientationConfidence)
-    .clamp(0, 0.65)
+  // Cox-Munk directionality is a stable, world-space statistical property.
+  // A subtle wind-aligned lobe keeps highlights polished without imprinting
+  // the stochastic FFT/mip texel grid into the reflection.
+  const coxDirectionality = coxWindVariance.sub(coxCrossVariance).abs()
+    .div(coxWindVariance.add(coxCrossVariance).max(0.0001));
+  const windAnisotropyConfidence = smoothstep(float(0.006), float(0.04), uniforms.microSlopeVariance);
+  const anisotropyStrength: NodeRef = coxDirectionality
+    .mul(windAnisotropyConfidence)
+    .mul(0.12)
+    .clamp(0, 0.04)
     .mul(uniforms.anisotropyEnabled)
     .mul(float(1).sub(foamBlend));
-  const anisotropyAngle = atan(covarianceXZ.mul(2), covarianceDelta).mul(0.5);
-  const anisotropyDirection = vec2(cos(anisotropyAngle), sin(anisotropyAngle));
+  const anisotropyDirection = uniforms.windDirectionXZ.normalize();
   material.anisotropyNode = anisotropyDirection.mul(anisotropyStrength);
   material.specularIntensityNode = mix(float(1), float(0.35), foamBlend);
 

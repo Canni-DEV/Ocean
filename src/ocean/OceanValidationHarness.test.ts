@@ -8,12 +8,13 @@ import {
 
 describe("ocean validation harness", () => {
   it("defines unique baseline, optical and PR6B validation scenarios", () => {
-    expect(OCEAN_VALIDATION_SCENARIOS).toHaveLength(28);
-    expect(new Set(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).size).toBe(28);
+    expect(OCEAN_VALIDATION_SCENARIOS).toHaveLength(29);
+    expect(new Set(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).size).toBe(29);
     expect(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).toContain("aerial-storm-300");
     expect(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).toContain("optical-bow-low-sun");
     expect(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).toContain("pr6b-storm-fixed-lightning");
     expect(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).toContain("pr6b-horizon-pan");
+    expect(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).toContain("pr6b-sun-column");
   });
 
   it("applies deterministic settings and query overrides", () => {

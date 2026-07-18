@@ -442,16 +442,16 @@ Todos con seed `1337`, tiempo de simulación fijo y espuma on/off cuando corresp
 
 #### Visuales
 
-- [x] La mediana de luminancia dentro del ROI del foco aumenta al menos dos stops
+- [ ] La mediana de luminancia dentro del ROI del foco aumenta al menos dos stops
   entre off/on, sujeto a calibración final de exposición.
-- [x] Fuera del cono, la variación de luminancia off/on es menor de `10%` salvo
+- [ ] Fuera del cono, la variación de luminancia off/on es menor de `10%` salvo
   reflexión físicamente justificable.
 - [x] Menos de `0.5%` de píxeles del ROI y la superficie visible quedan recortados.
 - [x] La columna solar candidata no forma una masa blanca continua
   fuera de la dirección especular.
-- [x] En noche, el agua mantiene silueta, gradiente de Fresnel y volumen sin llegar
+- [ ] En noche, el agua mantiene silueta, gradiente de Fresnel y volumen sin llegar
   a negro absoluto ni parecer autoiluminada.
-- [ ] La espuma desactivada mantiene su debug negro.
+- [x] La espuma desactivada mantiene su debug negro.
 - [ ] Paneo lento reduce al menos `50%` la variación temporal de alta frecuencia
   frente a la línea base previa a PR4/PR6.
 
@@ -483,13 +483,26 @@ Todos con seed `1337`, tiempo de simulación fijo y espuma on/off cuando corresp
 amanecer y noche revelaron clipping solar/lunar y estructura rectangular. La
 auditoría encontró una distribución GGX anisotrópica sin normalizar; la referencia
 CPU repetía la misma expresión y producía un falso positivo. PR6B.6 corrige la
-normalización, añade integración hemisférica independiente, elimina doble conteo
-de slope variance, proyecta covarianza al cono PSD y suprime orientación
-anisotrópica de baja confianza.
+normalización y añade integración hemisférica independiente. También elimina el
+doble conteo de slope variance. La orientación anisotrópica local derivada del mip
+se retiró del shading porque producía bloques incluso con mip cero; el lóbulo final
+es sutil, estable en mundo y alineado con el viento Cox–Munk.
 
 El harness acepta ahora `hour=<0..24>`, `anisotropy=0|1` y
 `slopeMip=auto|0..12`. Estos controles son únicamente diagnósticos y no cambian
 FFT, fases, desplazamiento, física ni generación de espuma.
+
+PR6B.7 añade `pr6b-sun-column`, una cámara reproducible que centra la reflexión
+solar más exigente. La navegación WebGPU limpia no registra errores de shader, el
+clipping tone-mapped ocupa `0.001%` del frame y la máscara sólo contiene fragmentos
+dispersos dentro de la columna especular. La evidencia está versionada en
+`docs/validation/pr6b/pr6b6/`.
+
+El smoke nocturno del mismo build mantiene `92.26%` del ROI lunar en negro digital.
+El foco duplica la luminancia media respecto de off, pero el incremento absoluto
+es sólo `0.00026`, insuficiente para legibilidad y para el gate de dos stops sobre
+una señal útil. Por eso noche y luces locales vuelven a estado pendiente; no debe
+avanzarse a PR6C interpretando la corrección solar como cierre completo de PR6B.
 
 Pendientes para declarar la PR cerrada:
 

@@ -2,7 +2,8 @@ import * as THREE from "three";
 import type { DebugRenderMode, DebugSettings, LightningOverride, QualityTier, WeatherPresetName } from "../engine/types";
 import type { BoatSystemsState } from "../gameplay/types";
 
-type CameraPreset = "rail" | "railForward" | "bow" | "bridge" | "aerial50" | "aerial150" | "aerial300";
+type CameraPreset = "rail" | "railForward" | "bow" | "bridge" | "sunColumn" |
+  "aerial50" | "aerial150" | "aerial300";
 type SeaPreset = "low" | "medium" | "high";
 export type ValidationCameraMotion = "static" | "pan-slow";
 export type ValidationLightName = "work" | "flashlight" | "cabin" | "navigation" | "anchor";
@@ -58,6 +59,9 @@ const CAMERA_STATES: Record<CameraPreset, { position: [number, number, number]; 
   railForward: { position: [3.4, 2.2, 0.5], target: [0, 0.2, -45] },
   bow: { position: [0, 2.6, -5.8], target: [0, 0.3, -45] },
   bridge: { position: [0, 4.2, 3.2], target: [0, 0.4, -35] },
+  // At 09:00 the view vector mirrors the clear-sky sun around the mean sea
+  // normal, placing the most demanding specular column in the camera center.
+  sunColumn: { position: [-4, 18, -18], target: [0, 0, 0] },
   aerial50: { position: [32, 50, 28], target: [0, 0, -10] },
   aerial150: { position: [72, 150, 66], target: [0, 0, -18] },
   // A tiny horizontal offset avoids the undefined up vector of an exact 90-degree look-down.
@@ -70,6 +74,7 @@ const CAMERA_WEATHER: Record<CameraPreset, { weather: WeatherPresetName; hour: n
   railForward: { weather: "clear", hour: 13.5 },
   bow: { weather: "clear", hour: 18.4 },
   bridge: { weather: "cloudy", hour: 15.2 },
+  sunColumn: { weather: "clear", hour: 9 },
   aerial50: { weather: "clear", hour: 13.5 },
   aerial150: { weather: "clear", hour: 16 },
   aerial300: { weather: "storm", hour: 15 }
@@ -109,6 +114,7 @@ export const OCEAN_VALIDATION_SCENARIOS: readonly OceanValidationScenario[] = [
   scenario({ id: "pr6b-storm-fixed-lightning", camera: "bridge", sea: "high", weather: "storm", worldTimeHours: 1, simulationTimeSeconds: 120, foam: true, seed: 1337, lightning: "fixed" }),
   scenario({ id: "pr6b-low-sun-bow", camera: "bow", sea: "medium", weather: "clear", worldTimeHours: 17.4, simulationTimeSeconds: 120, foam: true, seed: 1337 }),
   scenario({ id: "pr6b-sun-lateral", camera: "rail", sea: "medium", weather: "clear", worldTimeHours: 14.5, simulationTimeSeconds: 120, foam: true, seed: 1337 }),
+  scenario({ id: "pr6b-sun-column", camera: "sunColumn", sea: "medium", weather: "clear", worldTimeHours: 9, simulationTimeSeconds: 120, foam: false, seed: 1337 }),
   scenario({ id: "pr6b-cloudy-deck", camera: "bridge", sea: "medium", weather: "cloudy", worldTimeHours: 15.2, simulationTimeSeconds: 120, foam: true, seed: 1337 }),
   scenario({ id: "pr6b-horizon-pan", camera: "bridge", sea: "medium", weather: "clear", worldTimeHours: 16, simulationTimeSeconds: 120, foam: false, seed: 1337, cameraMotion: "pan-slow" })
 ];

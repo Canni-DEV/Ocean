@@ -34,7 +34,7 @@ export const DEFAULT_DEBUG_SETTINGS: DebugSettings = {
   waterTurbidity: 0.22,
   oceanLocalScatterGain: 1,
   oceanPhaseG: 0.55,
-  oceanNightUpwellingGain: 0.75,
+  oceanNightUpwellingGain: ATLANTIC_DEEP.upwellingNight,
   oceanSunGlitterGain: ATLANTIC_DEEP.sunGlitterGain,
   oceanMoonGlitterGain: ATLANTIC_DEEP.moonGlitterGain,
   oceanLocalOpticalPathM: 6,
