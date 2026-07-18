@@ -9,6 +9,7 @@
     WeatherPresetName
   } from "../engine/types";
   import { beaufortToWindSpeed } from "../state/seaState";
+  import { ATLANTIC_DEEP, OCEAN_OPTICS_OVERRIDE_LIMITS } from "../ocean/OceanOpticsProfile";
 
   type Props = {
     settings: DebugSettings;
@@ -21,6 +22,7 @@
 
   let { settings, metrics, onChange, onResetBoat, onRefuel, onRechargeFlashlight }: Props = $props();
   let showAdvanced = $state(false);
+  let opticsCopied = $state(false);
 
   const weatherOptions: Array<{ value: WeatherPresetName; label: string }> = [
     { value: "clear", label: "Despejado" },
@@ -58,7 +60,15 @@
     { value: "fresnel", label: "Fresnel" },
     { value: "opticalDepth", label: "Optical Path" },
     { value: "waterVolume", label: "Water Volume" },
-    { value: "reflectionGlitter", label: "Reflection / Glitter" }
+    { value: "localSpecular", label: "Local Specular" },
+    { value: "localVolume", label: "Local Volume" },
+    { value: "localLightRoles", label: "Local Light Roles" },
+    { value: "sunGlitter", label: "Sun Glitter" },
+    { value: "moonGlitter", label: "Moon Glitter" },
+    { value: "ambientVolume", label: "Ambient Volume" },
+    { value: "foamLighting", label: "Foam Lighting" },
+    { value: "luminanceHeatmap", label: "Luminance Heatmap" },
+    { value: "clippingMask", label: "Clipping Mask" }
   ];
 
   const atmosphereDebugModes: Array<{ value: AtmosphereDebugMode; label: string }> = [
@@ -98,6 +108,32 @@
 
   function selectWeather(preset: WeatherPresetName) {
     patch({ weatherPreset: preset });
+  }
+
+  function resetOceanOptics() {
+    patch({
+      oceanLocalScatterGain: ATLANTIC_DEEP.localScatterGain,
+      oceanPhaseG: ATLANTIC_DEEP.localPhaseG,
+      oceanNightUpwellingGain: ATLANTIC_DEEP.upwellingNight,
+      oceanSunGlitterGain: ATLANTIC_DEEP.sunGlitterGain,
+      oceanMoonGlitterGain: ATLANTIC_DEEP.moonGlitterGain,
+      oceanLocalOpticalPathM: ATLANTIC_DEEP.localOpticalPathM
+    });
+  }
+
+  async function copyOceanOptics() {
+    const payload = {
+      profile: ATLANTIC_DEEP.id,
+      localScatterGain: settings.oceanLocalScatterGain,
+      phaseG: settings.oceanPhaseG,
+      nightUpwellingGain: settings.oceanNightUpwellingGain,
+      sunGlitterGain: settings.oceanSunGlitterGain,
+      moonGlitterGain: settings.oceanMoonGlitterGain,
+      localOpticalPathM: settings.oceanLocalOpticalPathM
+    };
+    await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+    opticsCopied = true;
+    window.setTimeout(() => { opticsCopied = false; }, 1400);
   }
 
   const beaufortLabel = $derived(beaufortLabels[Math.round(Math.min(12, Math.max(0, settings.beaufort)))]);
@@ -375,6 +411,34 @@
         <span>Turbidez {settings.waterTurbidity.toFixed(2)}</span>
         <input min="0" max="1" step="0.01" type="range" value={settings.waterTurbidity} oninput={(event) => patch({ waterTurbidity: numberValue(event) })} />
       </label>
+      <label>
+        <span>Local Scatter {settings.oceanLocalScatterGain.toFixed(2)}</span>
+        <input min={OCEAN_OPTICS_OVERRIDE_LIMITS.localScatterGain[0]} max={OCEAN_OPTICS_OVERRIDE_LIMITS.localScatterGain[1]} step="0.01" type="range" value={settings.oceanLocalScatterGain} oninput={(event) => patch({ oceanLocalScatterGain: numberValue(event) })} />
+      </label>
+      <label>
+        <span>Phase g {settings.oceanPhaseG.toFixed(2)}</span>
+        <input min={OCEAN_OPTICS_OVERRIDE_LIMITS.phaseG[0]} max={OCEAN_OPTICS_OVERRIDE_LIMITS.phaseG[1]} step="0.01" type="range" value={settings.oceanPhaseG} oninput={(event) => patch({ oceanPhaseG: numberValue(event) })} />
+      </label>
+      <label>
+        <span>Night Upwelling {settings.oceanNightUpwellingGain.toFixed(2)}</span>
+        <input min={OCEAN_OPTICS_OVERRIDE_LIMITS.nightUpwellingGain[0]} max={OCEAN_OPTICS_OVERRIDE_LIMITS.nightUpwellingGain[1]} step="0.01" type="range" value={settings.oceanNightUpwellingGain} oninput={(event) => patch({ oceanNightUpwellingGain: numberValue(event) })} />
+      </label>
+      <label>
+        <span>Sun Glitter {settings.oceanSunGlitterGain.toFixed(2)}</span>
+        <input min={OCEAN_OPTICS_OVERRIDE_LIMITS.sunGlitterGain[0]} max={OCEAN_OPTICS_OVERRIDE_LIMITS.sunGlitterGain[1]} step="0.01" type="range" value={settings.oceanSunGlitterGain} oninput={(event) => patch({ oceanSunGlitterGain: numberValue(event) })} />
+      </label>
+      <label>
+        <span>Moon Glitter {settings.oceanMoonGlitterGain.toFixed(2)}</span>
+        <input min={OCEAN_OPTICS_OVERRIDE_LIMITS.moonGlitterGain[0]} max={OCEAN_OPTICS_OVERRIDE_LIMITS.moonGlitterGain[1]} step="0.01" type="range" value={settings.oceanMoonGlitterGain} oninput={(event) => patch({ oceanMoonGlitterGain: numberValue(event) })} />
+      </label>
+      <label>
+        <span>Local Path {settings.oceanLocalOpticalPathM.toFixed(1)} m</span>
+        <input min={OCEAN_OPTICS_OVERRIDE_LIMITS.localOpticalPathM[0]} max={OCEAN_OPTICS_OVERRIDE_LIMITS.localOpticalPathM[1]} step="0.1" type="range" value={settings.oceanLocalOpticalPathM} oninput={(event) => patch({ oceanLocalOpticalPathM: numberValue(event) })} />
+      </label>
+      <div class="col-span-2 flex gap-2">
+        <button class="flex-1 rounded border border-cyan-200/20 bg-cyan-200/10 px-2 py-1 text-[10px] uppercase text-cyan-100 hover:bg-cyan-200/20" type="button" onclick={resetOceanOptics}>Reset Atlantic</button>
+        <button class="flex-1 rounded border border-cyan-200/20 bg-cyan-200/10 px-2 py-1 text-[10px] uppercase text-cyan-100 hover:bg-cyan-200/20" type="button" onclick={copyOceanOptics}>{opticsCopied ? "Copied" : "Copy JSON"}</button>
+      </div>
       <label>
         <span>Exposure {settings.exposureBias.toFixed(2)}</span>
         <input min="-0.45" max="0.45" step="0.01" type="range" value={settings.exposureBias} oninput={(event) => patch({ exposureBias: numberValue(event) })} />

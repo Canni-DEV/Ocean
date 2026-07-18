@@ -1,6 +1,7 @@
 import * as THREE from "three/webgpu";
 import type { QualityTier } from "../engine/types";
 import type { FlashlightLevel, FlashlightState } from "../gameplay/types";
+import { tagOceanLight } from "../ocean/OceanLightRoles";
 
 export type FlashlightConfig = {
   capacitySeconds: number;
@@ -117,8 +118,11 @@ export class FlashlightBattery {
 export class PlayerFlashlight {
   private readonly group = new THREE.Group();
   // Intensity 0 when idle keeps lights in the WebGPU light set (avoids pipeline rebuilds on toggle / critical flicker).
-  private readonly spotlight = new THREE.SpotLight(0xffdfc4, 0, 55, THREE.MathUtils.degToRad(16), 0.5, 2);
-  private readonly spill = new THREE.PointLight(0xffe5cc, 0, 4, 2);
+  private readonly spotlight = tagOceanLight(
+    new THREE.SpotLight(0xffdfc4, 0, 55, THREE.MathUtils.degToRad(16), 0.5, 2),
+    "flashlight-spot"
+  );
+  private readonly spill = tagOceanLight(new THREE.PointLight(0xffe5cc, 0, 4, 2), "flashlight-spill");
   private readonly target = new THREE.Object3D();
   private readonly cameraPosition = new THREE.Vector3();
   private readonly cameraQuaternion = new THREE.Quaternion();
@@ -238,4 +242,3 @@ function normalizeConfig(config: FlashlightConfig): FlashlightConfig {
     criticalThreshold
   };
 }
-

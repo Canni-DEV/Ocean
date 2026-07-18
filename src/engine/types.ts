@@ -1,6 +1,7 @@
 import type { BoatSystemsState, FlashlightState, GameplayMode } from "../gameplay/types";
 
 export type QualityTier = "low" | "medium" | "high";
+export type LightningOverride = "weather" | "off" | "fixed";
 
 export type WeatherPresetName = "clear" | "cloudy" | "rain" | "storm";
 
@@ -41,7 +42,15 @@ export type DebugRenderMode =
   | "fresnel"
   | "opticalDepth"
   | "waterVolume"
-  | "reflectionGlitter";
+  | "localSpecular"
+  | "localVolume"
+  | "localLightRoles"
+  | "sunGlitter"
+  | "moonGlitter"
+  | "ambientVolume"
+  | "foamLighting"
+  | "luminanceHeatmap"
+  | "clippingMask";
 
 export type SeaStateControlMode = "weather" | "manual-overrides";
 
@@ -96,8 +105,6 @@ export type EnvironmentState = {
   moonColor: string;
   moonIntensity: number;
   cloudShadow: number;
-  waterAbsorptionColor: string;
-  waterScatterColor: string;
   exposure: number;
   celestial: CelestialState;
 };
@@ -208,6 +215,13 @@ export type DebugSettings = {
   boatWakeIntensity: number;
   boatWakeFoamIntensity: number;
   waterTurbidity: number;
+  oceanLocalScatterGain: number;
+  oceanPhaseG: number;
+  oceanNightUpwellingGain: number;
+  oceanSunGlitterGain: number;
+  oceanMoonGlitterGain: number;
+  oceanLocalOpticalPathM: number;
+  lightningOverride: LightningOverride;
   cloudCoverageBias: number;
   cloudDensityBias: number;
   exposureBias: number;

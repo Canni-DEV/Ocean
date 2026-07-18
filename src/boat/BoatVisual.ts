@@ -10,6 +10,8 @@ import type { FishingControlState } from "../fishing/FishingController";
 import { DEFAULT_BOAT_CONFIG, type BoatConfig, type BoatPhysics } from "./BoatPhysics";
 import { CockpitRig } from "./CockpitRig";
 import type { BoatSystemsState } from "../gameplay/types";
+import type { QualityTier } from "../engine/types";
+import { tagOceanLight } from "../ocean/OceanLightRoles";
 
 /**
  * Meshes del modelo GLB que se ocultan y se excluyen del collider para dejar
@@ -32,7 +34,7 @@ function isRemovedModelMesh(object: THREE.Object3D): boolean {
 }
 
 /** Intensidad ON del foco de proa; idle usa 0 para no reconstruir pipelines WebGPU. */
-const FORWARD_SPOT_INTENSITY = 1200;
+const FORWARD_SPOT_INTENSITY = 560;
 
 /** Visual del barco: carga el GLB definitivo al inicio y expone collider/rigs. */
 export class BoatVisual {
@@ -42,7 +44,10 @@ export class BoatVisual {
   private readonly modelGroup = new THREE.Group();
   private readonly lightGroup = new THREE.Group();
   // Intensity 0 when idle keeps SpotLights in the light set (avoids WebGPU pipeline rebuilds on toggle).
-  private readonly spotlight = new THREE.SpotLight(0xfff0d0, 0, 1000, 1.1, 0.48, 1.35);
+  private readonly spotlight = tagOceanLight(
+    new THREE.SpotLight(0xfff0d0, 0, 220, 0.48, 0.55, 2),
+    "boat-work"
+  );
   private readonly spotlightTarget = new THREE.Object3D();
   private modelReady = false;
   private lightsOn = false;
@@ -79,6 +84,24 @@ export class BoatVisual {
   setLightsOn(lightsOn: boolean): void {
     this.lightsOn = lightsOn;
     this.syncVisibility();
+  }
+
+  setQuality(quality: QualityTier): void {
+    const castShadow = quality !== "low";
+    const mapSize = quality === "high" ? 2048 : 1024;
+    const changed = this.spotlight.castShadow !== castShadow
+      || this.spotlight.shadow.mapSize.width !== mapSize;
+    this.spotlight.castShadow = castShadow;
+    this.spotlight.shadow.mapSize.set(mapSize, mapSize);
+    this.spotlight.shadow.camera.near = 0.25;
+    this.spotlight.shadow.camera.far = Math.min(this.spotlight.distance, 260);
+    this.spotlight.shadow.bias = -0.0004;
+    this.spotlight.shadow.normalBias = 0.035;
+    this.spotlight.shadow.camera.updateProjectionMatrix();
+    if (changed) {
+      this.spotlight.shadow.map?.dispose();
+      this.spotlight.shadow.map = null;
+    }
   }
 
   setSystemsState(state: BoatSystemsState, precipitation: number, deltaSeconds: number): void {

@@ -1,5 +1,4 @@
 import * as THREE from "three/webgpu";
-import { MeshPhysicalNodeMaterial } from "three/webgpu";
 import {
   Fn,
   atan,
@@ -31,6 +30,16 @@ import type { BoatWaterInteraction } from "./BoatWaterInteraction";
 import type { OceanSimulation } from "./simulation/OceanSimulation";
 import { microSlopeVarianceForWind } from "./simulation/OceanMath";
 import { beaufortToWindSpeed } from "../state/seaState";
+import { ATLANTIC_DEEP } from "./OceanOpticsProfile";
+import {
+  OceanPhysicalNodeMaterial,
+  oceanFoamLighting,
+  oceanLightRoles,
+  oceanLocalSpecular,
+  oceanLocalVolume,
+  oceanMoonGlitter,
+  oceanSunGlitter
+} from "./OceanPhysicalNodeMaterial";
 
 type NodeRef = any;
 
@@ -38,7 +47,6 @@ type OceanRendererOptions = {
   scene: THREE.Scene;
   simulation: OceanSimulation;
   boatInteraction: BoatWaterInteraction | null;
-  cloudShadows: unknown;
 };
 
 type AnyUniform<T> = any & { value: T };
@@ -56,15 +64,19 @@ type OceanUniformNodes = {
   microSlopeVariance: AnyUniform<number>;
   ambientColor: AnyUniform<THREE.Color>;
   ambientIntensity: AnyUniform<number>;
+  nightFactor: AnyUniform<number>;
+  localScatterGain: AnyUniform<number>;
+  phaseG: AnyUniform<number>;
+  nightUpwellingGain: AnyUniform<number>;
+  sunGlitterGain: AnyUniform<number>;
+  moonGlitterGain: AnyUniform<number>;
+  localOpticalPathM: AnyUniform<number>;
+  iblGain: AnyUniform<number>;
   boatInteractionOrigin: AnyUniform<THREE.Vector2>;
   boatInteractionSize: AnyUniform<number>;
   boatInteractionUvTexel: AnyUniform<number>;
   boatInteractionCellMeters: AnyUniform<number>;
   boatInteractionEnabled: AnyUniform<number>;
-  sunDirection: AnyUniform<THREE.Vector3>;
-  sunColor: AnyUniform<THREE.Color>;
-  sunVisibility: AnyUniform<number>;
-  sunDirectMask: AnyUniform<number>;
   debugHeight: AnyUniform<number>;
   debugNormal: AnyUniform<number>;
   debugFoam: AnyUniform<number>;
@@ -85,7 +97,15 @@ type OceanUniformNodes = {
   debugFresnel: AnyUniform<number>;
   debugOpticalDepth: AnyUniform<number>;
   debugWaterVolume: AnyUniform<number>;
-  debugReflectionGlitter: AnyUniform<number>;
+  debugLocalSpecular: AnyUniform<number>;
+  debugLocalVolume: AnyUniform<number>;
+  debugLocalLightRoles: AnyUniform<number>;
+  debugSunGlitter: AnyUniform<number>;
+  debugMoonGlitter: AnyUniform<number>;
+  debugAmbientVolume: AnyUniform<number>;
+  debugFoamLighting: AnyUniform<number>;
+  debugLuminanceHeatmap: AnyUniform<number>;
+  debugClippingMask: AnyUniform<number>;
 };
 
 const MAX_RADIUS_METERS = 30000;
@@ -171,7 +191,7 @@ export class OceanRenderer {
   private readonly simulation: OceanSimulation;
   private readonly mesh: THREE.Mesh;
   private readonly geometry: THREE.BufferGeometry;
-  private readonly material: MeshPhysicalNodeMaterial;
+  private readonly material: OceanPhysicalNodeMaterial;
   private readonly depthMaterial: THREE.NodeMaterial;
   private readonly uniforms: OceanUniformNodes;
   private readonly foamNodes: NodeRef[];
@@ -190,6 +210,9 @@ export class OceanRenderer {
 
     const shader = createWaterMaterial(this.simulation, options.boatInteraction);
     this.material = shader.material;
+    // Bind the same dynamic environment explicitly so the ocean can calibrate
+    // nocturnal IBL without changing Scene.environmentIntensity for the boat.
+    this.material.envMap = options.scene.environment;
     this.depthMaterial = shader.depthMaterial;
     this.uniforms = shader.uniforms;
     this.foamNodes = shader.foamNodes;
@@ -252,6 +275,14 @@ export class OceanRenderer {
     this.uniforms.microSlopeVariance.value = microSlopeVarianceForWind(effectiveWindSpeed);
     this.uniforms.ambientColor.value.set(environment.ambientColor);
     this.uniforms.ambientIntensity.value = environment.ambientIntensity;
+    const daylight = THREE.MathUtils.smoothstep(environment.celestial.sunDirection.y, -0.08, 0.42);
+    this.uniforms.nightFactor.value = 1 - daylight;
+    this.uniforms.localScatterGain.value = settings.oceanLocalScatterGain;
+    this.uniforms.phaseG.value = settings.oceanPhaseG;
+    this.uniforms.nightUpwellingGain.value = settings.oceanNightUpwellingGain;
+    this.uniforms.sunGlitterGain.value = settings.oceanSunGlitterGain;
+    this.uniforms.moonGlitterGain.value = settings.oceanMoonGlitterGain;
+    this.uniforms.localOpticalPathM.value = settings.oceanLocalOpticalPathM;
     if (this.boatInteraction && this.boatDynamicsNode && this.boatFoamNode) {
       const interaction = this.boatInteraction.sampleState;
       this.boatDynamicsNode.value = interaction.dynamicsTexture;
@@ -265,19 +296,10 @@ export class OceanRenderer {
     } else {
       this.uniforms.boatInteractionEnabled.value = 0;
     }
-    this.uniforms.sunColor.value.set(environment.sunColor);
-    this.uniforms.sunVisibility.value = environment.celestial.sunVisibility;
-    this.uniforms.sunDirectMask.value = environment.celestial.sunDirectMask;
-    this.uniforms.sunDirection.value.set(
-      environment.celestial.sunDirection.x,
-      environment.celestial.sunDirection.y,
-      environment.celestial.sunDirection.z
-    );
-
-    const daylight = THREE.MathUtils.smoothstep(environment.celestial.sunDirection.y, -0.08, 0.42);
     const iblMask = Math.max(daylight, environment.celestial.twilightFactor);
-    this.material.envMapIntensity =
-      THREE.MathUtils.lerp(0.12, 1.0, iblMask) * (1 - weather.cloudCoverage * 0.5);
+    this.uniforms.iblGain.value =
+      THREE.MathUtils.lerp(ATLANTIC_DEEP.nightIblIntensity, ATLANTIC_DEEP.dayIblIntensity, iblMask)
+      * (1 - weather.cloudCoverage * 0.5);
   }
 
   dispose(): void {
@@ -308,7 +330,15 @@ export class OceanRenderer {
     this.uniforms.debugFresnel.value = mode === "fresnel" ? 1 : 0;
     this.uniforms.debugOpticalDepth.value = mode === "opticalDepth" ? 1 : 0;
     this.uniforms.debugWaterVolume.value = mode === "waterVolume" ? 1 : 0;
-    this.uniforms.debugReflectionGlitter.value = mode === "reflectionGlitter" ? 1 : 0;
+    this.uniforms.debugLocalSpecular.value = mode === "localSpecular" ? 1 : 0;
+    this.uniforms.debugLocalVolume.value = mode === "localVolume" ? 1 : 0;
+    this.uniforms.debugLocalLightRoles.value = mode === "localLightRoles" ? 1 : 0;
+    this.uniforms.debugSunGlitter.value = mode === "sunGlitter" ? 1 : 0;
+    this.uniforms.debugMoonGlitter.value = mode === "moonGlitter" ? 1 : 0;
+    this.uniforms.debugAmbientVolume.value = mode === "ambientVolume" ? 1 : 0;
+    this.uniforms.debugFoamLighting.value = mode === "foamLighting" ? 1 : 0;
+    this.uniforms.debugLuminanceHeatmap.value = mode === "luminanceHeatmap" ? 1 : 0;
+    this.uniforms.debugClippingMask.value = mode === "clippingMask" ? 1 : 0;
   }
 }
 
@@ -316,7 +346,7 @@ function createWaterMaterial(
   simulation: OceanSimulation,
   boatInteraction: BoatWaterInteraction | null
 ): {
-  material: MeshPhysicalNodeMaterial;
+  material: OceanPhysicalNodeMaterial;
   depthMaterial: THREE.NodeMaterial;
   uniforms: OceanUniformNodes;
   foamNodes: NodeRef[];
@@ -337,15 +367,19 @@ function createWaterMaterial(
     microSlopeVariance: u(0.012),
     ambientColor: u(new THREE.Color("#89a8b8")),
     ambientIntensity: u(1),
+    nightFactor: u(0),
+    localScatterGain: u(ATLANTIC_DEEP.localScatterGain),
+    phaseG: u(ATLANTIC_DEEP.localPhaseG),
+    nightUpwellingGain: u(ATLANTIC_DEEP.upwellingNight),
+    sunGlitterGain: u(1),
+    moonGlitterGain: u(1),
+    localOpticalPathM: u(ATLANTIC_DEEP.localOpticalPathM),
+    iblGain: u(1),
     boatInteractionOrigin: u(new THREE.Vector2()),
     boatInteractionSize: u(1),
     boatInteractionUvTexel: u(1 / 128),
     boatInteractionCellMeters: u(1),
     boatInteractionEnabled: u(0),
-    sunDirection: u(new THREE.Vector3(0, 1, 0)),
-    sunColor: u(new THREE.Color("#fff1c2")),
-    sunVisibility: u(1),
-    sunDirectMask: u(1),
     debugHeight: u(0),
     debugNormal: u(0),
     debugFoam: u(0),
@@ -366,7 +400,15 @@ function createWaterMaterial(
     debugFresnel: u(0),
     debugOpticalDepth: u(0),
     debugWaterVolume: u(0),
-    debugReflectionGlitter: u(0)
+    debugLocalSpecular: u(0),
+    debugLocalVolume: u(0),
+    debugLocalLightRoles: u(0),
+    debugSunGlitter: u(0),
+    debugMoonGlitter: u(0),
+    debugAmbientVolume: u(0),
+    debugFoamLighting: u(0),
+    debugLuminanceHeatmap: u(0),
+    debugClippingMask: u(0)
   };
 
   const cascades = simulation.cascades;
@@ -402,7 +444,7 @@ function createWaterMaterial(
     return (boatFoamNode as any).sample(sample.uv).level(float(0)).mul(sample.mask);
   };
 
-  const material = new MeshPhysicalNodeMaterial();
+  const material = new OceanPhysicalNodeMaterial();
   material.metalness = 0;
   material.ior = 1.333;
   material.envMapIntensity = 1;
@@ -579,7 +621,7 @@ function createWaterMaterial(
   const foamBlend = smoothstep(float(0.12), float(0.62), oceanFoamAmount)
     .max(smoothstep(float(0.055), float(0.46), boatFoamAmount));
 
-  const foamColor = color("#dbe7e7");
+  const foamColor = color(ATLANTIC_DEEP.foamColor);
 
   // The water body has no diffuse blue paint. Its visible energy is the GGX
   // environment/sun reflection plus the deep-water volume below.
@@ -597,9 +639,10 @@ function createWaterMaterial(
     .add(screenVariance)
     .add(rainVariance)
     .max(0);
-  const alphaSquared = float(Math.pow(0.08 * 0.08, 2)).add(totalVariance.mul(0.22));
-  const waterRoughness = alphaSquared.pow(0.25).clamp(0.08, 0.48);
-  material.roughnessNode = mix(waterRoughness, float(0.72), foamBlend);
+  const alphaSquared = float(Math.pow(ATLANTIC_DEEP.waterRoughnessMin ** 2, 2)).add(totalVariance.mul(0.22));
+  const waterRoughness = alphaSquared.pow(0.25)
+    .clamp(ATLANTIC_DEEP.waterRoughnessMin, ATLANTIC_DEEP.waterRoughnessMax);
+  material.roughnessNode = mix(waterRoughness, float(ATLANTIC_DEEP.foamRoughness), foamBlend);
 
   const covarianceTrace = varianceX.add(varianceZ);
   const covarianceDelta = varianceX.sub(varianceZ);
@@ -621,42 +664,60 @@ function createWaterMaterial(
   // upwelling. Fresnel reflection itself remains in MeshPhysicalNodeMaterial.
   const viewDir = cameraPosition.sub(positionWorld).normalize();
   const cosIncident = worldNormal.dot(viewDir).max(0.001).clamp(0, 1);
-  const f0 = float(0.02037);
+  const f0Value = ((ATLANTIC_DEEP.ior - 1) / (ATLANTIC_DEEP.ior + 1)) ** 2;
+  const f0 = float(f0Value);
   const fresnel = f0.add(float(1).sub(f0).mul(float(1).sub(cosIncident).pow(5))).clamp(0, 1);
   const eta = float(1 / 1.333);
   const sinTransmittedSquared = float(1).sub(cosIncident.mul(cosIncident)).mul(eta.mul(eta));
   const cosTransmitted = sqrt(float(1).sub(sinTransmittedSquared).max(0.0001));
   const absorption = mix(
-    vec3(0.32, 0.075, 0.028),
-    vec3(0.42, 0.14, 0.065),
+    vec3(...ATLANTIC_DEEP.absorptionBase),
+    vec3(...ATLANTIC_DEEP.absorptionTurbid),
     uniforms.turbidity
   );
   const scattering = mix(
-    vec3(0.006, 0.018, 0.032),
-    vec3(0.028, 0.065, 0.052),
+    vec3(...ATLANTIC_DEEP.scatteringBase),
+    vec3(...ATLANTIC_DEEP.scatteringTurbid),
     uniforms.turbidity
   );
-  const effectiveDepth = mix(float(10), float(4), uniforms.turbidity);
+  const effectiveDepth = mix(
+    float(ATLANTIC_DEEP.effectiveDepthBaseM),
+    float(ATLANTIC_DEEP.effectiveDepthTurbidM),
+    uniforms.turbidity
+  );
   const opticalPath = effectiveDepth.div(cosTransmitted.max(0.15));
   const extinction = absorption.add(scattering);
   const transmittance = exp(extinction.mul(opticalPath).negate());
   const scatteringAlbedo = scattering.div(extinction.max(0.0001));
   const ambientRadiance = uniforms.ambientColor.mul(uniforms.ambientIntensity);
+  const upwellingGain = mix(
+    float(ATLANTIC_DEEP.upwellingDay),
+    uniforms.nightUpwellingGain,
+    uniforms.nightFactor
+  );
   const waterVolume = ambientRadiance
     .mul(scatteringAlbedo)
     .mul(vec3(1, 1, 1).sub(transmittance))
-    .mul(0.55);
-  const volumeContribution = waterVolume
+    .mul(upwellingGain);
+  const ambientVolume = waterVolume
     .mul(float(1).sub(fresnel))
     .mul(float(1).sub(foamBlend));
-  material.emissiveNode = volumeContribution;
-
-  const sunHalf = viewDir.add(uniforms.sunDirection).normalize();
-  const glitterExponent = mix(float(18), float(300), float(1).sub(waterRoughness));
-  const reflectionGlitter = worldNormal.dot(sunHalf).max(0).pow(glitterExponent)
-    .mul(fresnel)
-    .mul(uniforms.sunVisibility)
-    .mul(uniforms.sunDirectMask);
+  material.emissiveNode = ambientVolume;
+  material.setOceanLightingContext({
+    foamBlend,
+    foamColor,
+    extinction,
+    scatteringAlbedo,
+    fresnel,
+    localOpticalPath: opticalPath.min(uniforms.localOpticalPathM),
+    localScatterGain: uniforms.localScatterGain,
+    phaseG: uniforms.phaseG,
+    sunGlitterGain: uniforms.sunGlitterGain,
+    moonGlitterGain: uniforms.moonGlitterGain,
+    iblGain: uniforms.iblGain,
+    celestialAngularRadiusRad: THREE.MathUtils.degToRad(ATLANTIC_DEEP.celestialAngularRadiusDeg),
+    f0: f0Value
+  });
 
   // ------------------------------------------------------------- debug views
   const fresnelDebug = fresnel;
@@ -703,8 +764,23 @@ function createWaterMaterial(
     const opticalDepthVis = opticalPath.div(24).clamp(0, 1);
     result = result.add(vec3(opticalDepthVis, opticalDepthVis.mul(0.55), float(1).sub(opticalDepthVis))
       .mul(uniforms.debugOpticalDepth));
-    result = result.add(waterVolume.mul(5).clamp(0, 1).mul(uniforms.debugWaterVolume));
-    result = result.add(vec3(reflectionGlitter).mul(uniforms.debugReflectionGlitter));
+    result = result.add(ambientVolume.add(oceanLocalVolume).mul(5).clamp(0, 1).mul(uniforms.debugWaterVolume));
+    result = result.add(oceanLocalSpecular.mul(2).clamp(0, 1).mul(uniforms.debugLocalSpecular));
+    result = result.add(oceanLocalVolume.mul(5).clamp(0, 1).mul(uniforms.debugLocalVolume));
+    result = result.add(oceanLightRoles.clamp(0, 1).mul(uniforms.debugLocalLightRoles));
+    result = result.add(oceanSunGlitter.mul(2).clamp(0, 1).mul(uniforms.debugSunGlitter));
+    result = result.add(oceanMoonGlitter.mul(8).clamp(0, 1).mul(uniforms.debugMoonGlitter));
+    result = result.add(ambientVolume.mul(5).clamp(0, 1).mul(uniforms.debugAmbientVolume));
+    result = result.add(oceanFoamLighting.mul(2).clamp(0, 1).mul(uniforms.debugFoamLighting));
+    const outputLuminance = output.rgb.dot(vec3(0.2126, 0.7152, 0.0722));
+    const heat = vec3(
+      smoothstep(float(0), float(0.18), outputLuminance),
+      smoothstep(float(0.08), float(0.65), outputLuminance),
+      smoothstep(float(0.45), float(1), outputLuminance)
+    );
+    result = result.add(heat.mul(uniforms.debugLuminanceHeatmap));
+    const clipped = step(float(1), output.r.max(output.g).max(output.b));
+    result = result.add(vec3(clipped, 0, 0).mul(uniforms.debugClippingMask));
     return result;
   })();
 
@@ -728,7 +804,15 @@ function createWaterMaterial(
     .add(uniforms.debugFresnel)
     .add(uniforms.debugOpticalDepth)
     .add(uniforms.debugWaterVolume)
-    .add(uniforms.debugReflectionGlitter)
+    .add(uniforms.debugLocalSpecular)
+    .add(uniforms.debugLocalVolume)
+    .add(uniforms.debugLocalLightRoles)
+    .add(uniforms.debugSunGlitter)
+    .add(uniforms.debugMoonGlitter)
+    .add(uniforms.debugAmbientVolume)
+    .add(uniforms.debugFoamLighting)
+    .add(uniforms.debugLuminanceHeatmap)
+    .add(uniforms.debugClippingMask)
     .clamp(0, 1);
   material.outputNode = mix(output, vec4(debugColor, 1), debugBlend);
 

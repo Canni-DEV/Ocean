@@ -8,6 +8,7 @@ import { CloudShadowMap } from "./clouds/CloudShadowMap";
 import { VolumetricCloudPass, CLOUD_QUALITY, type SceneDepthInput } from "./clouds/VolumetricCloudPass";
 import { LightningSystem } from "./LightningSystem";
 import { directLightMask, twilightFactor } from "./celestialMask";
+import { tagOceanLight } from "../ocean/OceanLightRoles";
 
 type NodeRef = any;
 type AnyUniform<T> = any & { value: T };
@@ -84,6 +85,8 @@ export class AtmosphereSystem {
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
+    tagOceanLight(this.sunLight, "sun");
+    tagOceanLight(this.moonLight, "moon");
 
     this.sky = new SkyMesh();
     this.sky.scale.setScalar(30000);
@@ -265,7 +268,13 @@ export class AtmosphereSystem {
       options.originOffsetMeters
     );
 
-    this.lightning.update(options.deltaSeconds, weather, options.camera, cloudsEnabled);
+    this.lightning.update(
+      options.deltaSeconds,
+      weather,
+      options.camera,
+      cloudsEnabled,
+      this.settings?.lightningOverride ?? "weather"
+    );
     const flash = this.lightning.flashIntensity;
 
     if (cloudsEnabled) {
@@ -517,14 +526,6 @@ export class AtmosphereSystem {
     const starVisibility = night * (1 - weather.cloudCoverage) * (1 - weather.humidity * 0.35);
     const ambientIntensity = THREE.MathUtils.lerp(0.08, 0.92, daylight) * (1 - cloudShadow * 0.55) + night * 0.07;
 
-    const turbidityMix = THREE.MathUtils.clamp(storm * 0.7 + weather.precipitation * 0.4, 0, 1);
-    const absorption = new THREE.Color("#04222e")
-      .lerp(new THREE.Color("#0b1519"), turbidityMix)
-      .lerp(new THREE.Color("#010b12"), night * 0.8);
-    const scatter = new THREE.Color("#0d6a58")
-      .lerp(new THREE.Color("#2d4a44"), turbidityMix)
-      .lerp(new THREE.Color("#04191f"), night * 0.85);
-
     return {
       skyZenithColor: `#${zenith.getHexString()}`,
       skyHorizonColor: `#${horizon.getHexString()}`,
@@ -537,8 +538,6 @@ export class AtmosphereSystem {
       moonColor: "#b8caff",
       moonIntensity: THREE.MathUtils.lerp(0, 0.36, moonVisibility * moonDirectMask),
       cloudShadow,
-      waterAbsorptionColor: `#${absorption.getHexString()}`,
-      waterScatterColor: `#${scatter.getHexString()}`,
       exposure: THREE.MathUtils.clamp(1 + exposureBias - cloudShadow * 0.18 + twilightGlow * 0.08, 0.45, 1.6),
       celestial: {
         sunDirection: { x: sun.x, y: sun.y, z: sun.z },

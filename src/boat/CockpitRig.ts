@@ -13,6 +13,7 @@ import {
   smoothWrappedAngle,
   type RadarProjection
 } from "./CockpitInstrumentMath";
+import { tagOceanLight } from "../ocean/OceanLightRoles";
 
 export type CockpitHit = { kind: "control"; target: InteractionTarget };
 
@@ -245,10 +246,10 @@ export class CockpitRig {
   private readonly wetGlass: THREE.Mesh;
   private readonly bilgeWater: THREE.Mesh;
   // Idle intensity 0 keeps lights in the WebGPU set (same pattern as LightningSystem).
-  private readonly cabinLight = new THREE.PointLight(0xffe7ba, 0, 4.5, 1.8);
-  private readonly navPort = new THREE.PointLight(0xff2038, 0, 5, 2);
-  private readonly navStarboard = new THREE.PointLight(0x35ff89, 0, 5, 2);
-  private readonly anchorLight = new THREE.PointLight(0xf5f7ff, 0, 7, 2);
+  private readonly cabinLight = tagOceanLight(new THREE.PointLight(0xffe7ba, 0, 4.5, 1.8), "cabin");
+  private readonly navPort = tagOceanLight(new THREE.PointLight(0xff2038, 0, 5, 2), "nav-port");
+  private readonly navStarboard = tagOceanLight(new THREE.PointLight(0x35ff89, 0, 5, 2), "nav-starboard");
+  private readonly anchorLight = tagOceanLight(new THREE.PointLight(0xf5f7ff, 0, 7, 2), "anchor");
   private highlighted: THREE.Object3D | null = null;
   private highlightedControl: CockpitControlId | null = null;
   private wiperPhase = 0;

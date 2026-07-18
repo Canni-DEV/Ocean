@@ -7,24 +7,41 @@ import {
 } from "./OceanValidationHarness";
 
 describe("ocean validation harness", () => {
-  it("defines the twelve baseline and three optical validation scenarios", () => {
-    expect(OCEAN_VALIDATION_SCENARIOS).toHaveLength(15);
-    expect(new Set(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).size).toBe(15);
+  it("defines unique baseline, optical and PR6B validation scenarios", () => {
+    expect(OCEAN_VALIDATION_SCENARIOS).toHaveLength(28);
+    expect(new Set(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).size).toBe(28);
     expect(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).toContain("aerial-storm-300");
     expect(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).toContain("optical-bow-low-sun");
+    expect(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).toContain("pr6b-storm-fixed-lightning");
+    expect(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).toContain("pr6b-horizon-pan");
   });
 
   it("applies deterministic settings and query overrides", () => {
-    const scenario = readOceanValidationScenario("?oceanValidation=bow-high&foam=0&seed=99");
+    const scenario = readOceanValidationScenario("?oceanValidation=bow-high&foam=0&seed=99&quality=medium");
     expect(scenario).not.toBeNull();
     const settings = applyOceanValidationSettings(DEFAULT_DEBUG_SETTINGS, scenario!);
     expect(settings).toMatchObject({
-      quality: "high",
+      quality: "medium",
       weatherPreset: "clear",
       beaufort: 8,
       oceanSeed: 99,
       showFoam: false,
       seaStateControlMode: "manual-overrides"
     });
+  });
+
+  it("overrides light and lightning state without changing the scenario registry", () => {
+    const scenario = readOceanValidationScenario(
+      "?oceanValidation=pr6b-rail-night-off&lights=work,anchor&lightning=fixed"
+    );
+    expect(scenario?.lights).toEqual({
+      work: true,
+      flashlight: false,
+      cabin: false,
+      navigation: false,
+      anchor: true
+    });
+    expect(scenario?.lightning).toBe("fixed");
+    expect(OCEAN_VALIDATION_SCENARIOS.find((entry) => entry.id === "pr6b-rail-night-off")?.lights.work).toBe(false);
   });
 });

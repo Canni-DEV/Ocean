@@ -1,6 +1,7 @@
 import { writable } from "svelte/store";
 import type { DebugSettings, EngineMetrics } from "../engine/types";
 import { DEFAULT_BOOM_ELEVATION_LIMITS_DEG } from "../fishing/boomElevationLimits";
+import { ATLANTIC_DEEP } from "../ocean/OceanOpticsProfile";
 
 export const DEFAULT_DEBUG_SETTINGS: DebugSettings = {
   quality: "medium",
@@ -31,6 +32,13 @@ export const DEFAULT_DEBUG_SETTINGS: DebugSettings = {
   boatWakeIntensity: 1,
   boatWakeFoamIntensity: 1,
   waterTurbidity: 0.22,
+  oceanLocalScatterGain: 1,
+  oceanPhaseG: 0.55,
+  oceanNightUpwellingGain: 0.75,
+  oceanSunGlitterGain: ATLANTIC_DEEP.sunGlitterGain,
+  oceanMoonGlitterGain: ATLANTIC_DEEP.moonGlitterGain,
+  oceanLocalOpticalPathM: 6,
+  lightningOverride: "weather",
   cloudCoverageBias: 0,
   cloudDensityBias: 0,
   exposureBias: 0,
@@ -38,10 +46,10 @@ export const DEFAULT_DEBUG_SETTINGS: DebugSettings = {
   firstPerson: true,
   flashlightCapacitySeconds: 30 * 60,
   flashlightRechargeSeconds: 10 * 60,
-  flashlightIntensityCd: 1100,
-  flashlightRangeM: 55,
-  flashlightHalfAngleDeg: 16,
-  flashlightPenumbra: 0.5,
+  flashlightIntensityCd: 260,
+  flashlightRangeM: 45,
+  flashlightHalfAngleDeg: 18,
+  flashlightPenumbra: 0.85,
   flashlightLowThreshold: 0.15,
   flashlightCriticalThreshold: 0.05,
   fishingRopeEnabled: true,

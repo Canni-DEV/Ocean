@@ -9,8 +9,11 @@
     "preview": "vite preview --host 127.0.0.1",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "typecheck": "tsc --noEmit && svelte-check --tsconfig ./tsconfig.json",
-    "test": "vitest",
-    "test:run": "vitest run"
+    "test": "vitest src",
+    "test:run": "vitest run src",
+    "test:visual": "playwright test",
+    "capture:ocean-pr6b": "cross-env PR6B_ARTIFACT_SET=candidate PR6B_CAPTURE_FULL=1 PR6B_HEADFUL=1 playwright test --project=edge",
+    "capture:ocean-pr6b:chromium": "cross-env PR6B_ARTIFACT_SET=candidate PR6B_CAPTURE_FULL=1 PR6B_HEADFUL=1 playwright test --project=chromium"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.11",
@@ -20,11 +23,15 @@
     "vite": "^7.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@sveltejs/adapter-static": "^3.0.8",
     "@sveltejs/vite-plugin-svelte": "^6.1.0",
     "@tsconfig/svelte": "^5.0.4",
+    "@types/pngjs": "^6.0.5",
     "@types/three": "^0.185.0",
     "@webgpu/types": "^0.1.64",
+    "cross-env": "^10.1.0",
+    "pngjs": "^7.0.0",
     "svelte-check": "^4.2.2",
     "tailwindcss": "^4.1.11",
     "typescript": "^5.8.3",

@@ -11,8 +11,10 @@ import { OceanRenderer } from "../ocean/OceanRenderer";
 import { BoatWaterInteraction } from "../ocean/BoatWaterInteraction";
 import {
   applyOceanValidationCamera,
+  applyOceanValidationLights,
   applyOceanValidationSettings,
   readOceanValidationScenario,
+  validationFlashlightEnabled,
   type OceanValidationScenario
 } from "../ocean/OceanValidationHarness";
 import { CameraFovZoom } from "../player/CameraFovZoom";
@@ -112,6 +114,7 @@ export class EngineApp {
   private status: EngineMetrics["status"] = "booting";
   private error: string | null = null;
   private readonly validationScenario: OceanValidationScenario | null;
+  private validationElapsedSeconds = 0;
 
   constructor(options: EngineAppOptions) {
     this.canvas = options.canvas;
@@ -131,6 +134,7 @@ export class EngineApp {
     this.gameplayInput = new GameplayInputRouter(this.canvas);
     this.firstPerson = new FirstPersonController(this.input.camera, this.canvas);
     this.flashlight = new PlayerFlashlight(this.scene, flashlightConfigFromSettings(this.settings), this.activeQuality);
+    this.boatVisual.setQuality(this.activeQuality);
     this.fishingRopeSystem = new FishingRopeSystem({
       enabled: this.settings.fishingRopeEnabled,
       minLengthM: this.settings.fishingRopeMinLengthM,
@@ -170,6 +174,7 @@ export class EngineApp {
     }
     this.flashlight.applyConfig(flashlightConfigFromSettings(settings));
     this.flashlight.setQuality(settings.quality);
+    this.boatVisual.setQuality(settings.quality);
     if (settings.boatLightsOn !== previousDebugLight) this.systems.state.workLight = settings.boatLightsOn;
 
     this.ocean?.applySettings(settings);
@@ -264,6 +269,10 @@ export class EngineApp {
       // Boat work spots + player flashlight are already in the scene graph at intensity 0
       // so the first WebGPU light pipelines compile here, not on the first switch / F press.
       this.systems.state.workLight = this.settings.boatLightsOn;
+      if (this.validationScenario) {
+        applyOceanValidationLights(this.systems.state, this.validationScenario);
+        if (validationFlashlightEnabled(this.validationScenario)) this.flashlight.toggle();
+      }
       this.boatVisual.setLightsOn(this.settings.boatLightsOn);
       this.scene.add(this.boatVisual.group);
       if (this.validationScenario) {
@@ -294,6 +303,7 @@ export class EngineApp {
       (window as any).__engine = this;
       this.loop();
     } catch (error) {
+      console.error("Engine initialization failed", error);
       this.status = "error";
       this.error = error instanceof Error ? error.message : String(error);
       this.publishMetrics();
@@ -307,8 +317,7 @@ export class EngineApp {
     const ocean = new OceanRenderer({
       scene: this.scene,
       simulation,
-      boatInteraction,
-      cloudShadows: this.atmosphere?.cloudShadows ?? null
+      boatInteraction
     });
     ocean.applySettings(this.settings);
     this.simulation = simulation;
@@ -354,6 +363,7 @@ export class EngineApp {
     const now = performance.now();
     const deltaMs = Math.min(100, now - this.lastFrameMs);
     const deltaSeconds = deltaMs / 1000;
+    if (this.validationScenario) this.validationElapsedSeconds += deltaSeconds;
     this.lastFrameMs = now;
     const statStart = this.stats.begin();
     const frameInput = this.gameplayInput.consumeFrame();
@@ -482,7 +492,8 @@ export class EngineApp {
     this.flashlight.update({
       deltaSeconds,
       camera: this.input.camera,
-      active: this.firstPersonActive && this.gameplayMode !== "debugFreeCamera",
+      active: validationFlashlightEnabled(this.validationScenario)
+        || (this.firstPersonActive && this.gameplayMode !== "debugFreeCamera"),
       chargingAllowed: this.systems.state.engine === "running" && this.isNearHelmCharger(rig),
       paused: this.settings.paused
     });
@@ -501,7 +512,7 @@ export class EngineApp {
     this.publishGameplayUi(frameInput, interactionFrame, stationCandidate);
 
     if (this.validationScenario) {
-      applyOceanValidationCamera(this.input.camera, this.validationScenario);
+      applyOceanValidationCamera(this.input.camera, this.validationScenario, this.validationElapsedSeconds);
     }
 
     const environment = this.atmosphere.update({
