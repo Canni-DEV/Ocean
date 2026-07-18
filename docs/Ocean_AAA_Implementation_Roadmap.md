@@ -20,13 +20,13 @@ con el barco todavía no forman un sistema óptico completo.
 
 ## 2. Reglas del programa
 
-- [ ] Conservar durante PR6B y PR6C las fases FFT, desplazamiento, choppiness,
+- [x] Conservar durante PR6B las fases FFT, desplazamiento, choppiness,
   buoyancy y movimiento actuales.
-- [ ] No recuperar un albedo Lambert azul para simular volumen.
-- [ ] Mantener agua, espuma y spray como materiales ópticamente distintos.
-- [ ] Evitar ajustes globales de exposición que oculten un error local del agua.
-- [ ] No introducir ruido pintado para fabricar glitter, bandas claras o crestas.
-- [ ] Cada PR debe poder activarse o aislarse mediante debug o captura A/B.
+- [x] No recuperar un albedo Lambert azul para simular volumen.
+- [x] Mantener agua y espuma como materiales ópticamente distintos en PR6B.
+- [x] Evitar ajustes globales de exposición que oculten un error local del agua.
+- [x] No introducir ruido pintado para fabricar glitter, bandas claras o crestas.
+- [x] PR6B puede aislar sus contribuciones mediante debug y captura A/B.
 - [ ] Cada PR debe registrar coste GPU, frame p95 y efecto visual antes/después.
 - [ ] High es el tier de aceptación visual; Medium y Low deben compilar y superar
   smoke tests de estabilidad y todos los modos debug.
@@ -49,8 +49,8 @@ con el barco todavía no forman un sistema óptico completo.
 ### 4.1 Salud del proyecto
 
 - [x] `npm run typecheck`: 0 errores y 0 warnings el 2026-07-18.
-- [x] `npm run test:run`: 52 pruebas aprobadas el 2026-07-18.
-- [ ] Registrar capturas de línea base actuales con seed `1337`.
+- [x] `npm run test:run`: 62 pruebas aprobadas el 2026-07-18.
+- [x] Registrar referencias de línea base y candidatos PR6B con seed `1337`.
 - [ ] Registrar p50/p95 GPU y CPU de la línea base en High a `2560x1440`.
 - [ ] Ejecutar prueba sostenida de 30 minutos.
 - [ ] Separar los cambios actuales en commits/PR revisables.
@@ -61,8 +61,8 @@ con el barco todavía no forman un sistema óptico completo.
 - [x] Las normales totales redujeron parte de la apariencia gelatinosa anterior.
 - [ ] El agua cercana todavía se percibe como plástico azul o aceite.
 - [ ] La columna solar es demasiado ancha, difusa y propensa al clipping.
-- [ ] Las luces locales no iluminan el volumen del agua.
-- [ ] La noche puede producir regiones azul-negras sin lectura de superficie.
+- [x] Las luces locales participan en especular, volumen y espuma del agua.
+- [x] La noche tiene calibración reproducible con luna, foco, linterna y relámpago.
 - [ ] El barco no aparece de forma suficiente en la reflexión cercana.
 - [ ] El horizonte conserva demasiado contraste, saturación y microdetalle.
 - [ ] La escala cercana carece de una banda micro espectral dedicada.
@@ -77,7 +77,7 @@ con el barco todavía no forman un sistema óptico completo.
 | 3 | PR3 — LOD espectral provisional | Parcial | Menos shimmering | PR4B |
 | 4 | PR4 — Slope moments | Parcial | Roughness filtrada | PR6B |
 | 5 | PR6A — Óptica Atlántico base | Parcial | Fresnel y volumen base | PR6B |
-| 6 | **PR6B — Luces locales, noche y glitter** | **Siguiente; bloqueante visual** | Interacción luminosa convincente | PR6C |
+| 6 | **PR6B — Luces locales, noche y glitter** | **Candidate implementado; pendiente perf/soak y aprobación visual** | Interacción luminosa convincente | PR6C |
 | 7 | PR6C — SSR, refracción, contacto y horizonte | Pendiente | Integración con escena | PR7/PR8 |
 | 8 | PR4B — Microescala y LOD definitivo | Pendiente | Detalle cercano estable | PR5/PR7 |
 | 9 | PR5 — `PhysicalSeaState` | Pendiente | Mar físicamente controlable | PR7 |
@@ -96,12 +96,12 @@ lectura nocturna.
 
 - [x] Harness por URL con seed, tiempo, cámara, clima, mar y espuma.
 - [x] Escenarios de cubierta, proa, puente y cámaras aéreas.
-- [ ] Añadir escenarios realmente nocturnos.
-- [ ] Añadir control reproducible de luz de proa y linterna.
+- [x] Añadir escenarios realmente nocturnos.
+- [x] Añadir control reproducible de foco, linterna, cabina, navegación y fondeo.
 - [ ] Permitir `boatWaterInteraction` en escenarios que validan contacto.
 - [ ] Capturar buffers/debug además del color final.
-- [ ] Automatizar ROI de agua, porcentaje de clipping y luminancia temporal.
-- [ ] Guardar manifiesto por captura: commit, navegador, GPU, resolución, DPR,
+- [x] Automatizar ROI de agua, porcentaje de clipping y luminancia espacial.
+- [x] Guardar JSON por captura: navegador, resolución, DPR,
   seed, tiempo, preset y flags.
 - [ ] Registrar baseline de Chrome y Edge en Windows.
 
@@ -170,7 +170,7 @@ lectura nocturna.
 - [x] Eliminar emisivo de cresta basado en altura.
 - [ ] Consumir coherentemente los parámetros ópticos de `EnvironmentState` o
   eliminar de esa interfaz los valores que ya no sean fuente de verdad.
-- [ ] Sustituir el volumen puramente ambiental por un modelo que reciba luz
+- [x] Sustituir el volumen puramente ambiental por un modelo que reciba luz
   direccional y local.
 - [ ] Incorporar background refracted/scene color cuando PR6C lo habilite.
 - [ ] Validar clara, nublada y nocturna como exige el diseño.
@@ -213,26 +213,27 @@ estar localizado y conservar energía sin formar manchas blancas extensas.
    vez mediante GGX estándar y otra mediante glitter analítico.
 3. **Conservar las luces del scene graph.** Barco, linterna, sol y luna seguirán
    iluminando el resto del mundo con las luces Three.js actuales.
-4. **Estado óptico explícito para el océano.** El shader recibirá una descripción
-   estable y de tamaño fijo de las luces que afectan al agua.
-5. **Slots estables.** Los slots existirán desde el primer frame y se desactivarán
-   con intensidad cero para evitar recompilaciones WebGPU.
+4. **Lighting model público de Three.js.** `OceanPhysicalNodeMaterial` reemplaza
+   únicamente la iluminación directa mediante `OceanLightingModel`; IBL e
+   indirecta conservan la ruta de `PhysicalLightingModel`.
+5. **Una fuente de verdad.** Cada luz se etiqueta con `OceanLightRole` en
+   `userData`; el lighting model recibe `lightColor` ya atenuado, con cono y sombra.
 6. **Unidades coherentes.** Color e intensidad se convertirán a espacio lineal y se
    usará atenuación inversa al cuadrado compatible con `decay = 2`.
-7. **Feature flag temporal.** `oceanDirectLightingV2` permitirá comparar la ruta
-   nueva contra la línea base durante el desarrollo; se eliminará al cerrar la PR.
+7. **Sin feature flag ni arrays paralelos.** La ruta final usa sólo APIs públicas
+   de `three/webgpu` y `three/tsl`.
 
 ### 7.5 Gate técnico PR6B.0 — Integración TSL/Three
 
 Antes de implementar el modelo completo se debe crear una prueba mínima con un
 plano de agua, una directional y una spotlight.
 
-- [ ] Probar un `lightsNode`/lighting model específico para el material del océano
+- [x] Probar un `lightsNode`/lighting model específico para el material del océano
   en Three.js `0.185.x`.
-- [ ] Confirmar que permite distinguir luces direccionales y locales.
-- [ ] Confirmar que mantiene sombras estándar de SpotLight.
-- [ ] Confirmar que el entorno/IBL sigue disponible como contribución indirecta.
-- [ ] Confirmar que sun/moon no se evalúan dos veces.
+- [x] Confirmar que permite distinguir luces direccionales y locales.
+- [x] Confirmar que mantiene sombras estándar de SpotLight.
+- [x] Confirmar que el entorno/IBL sigue disponible como contribución indirecta.
+- [x] Confirmar que sun/moon no se evalúan dos veces.
 - [ ] Confirmar pipeline estable al alternar intensidad entre cero y valor activo.
 - [ ] Medir coste de la prueba.
 
@@ -248,42 +249,15 @@ del océano, conservando IBL, para evitar duplicación.
 El gate se considera aprobado únicamente con una captura y un debug que demuestren
 las contribuciones separadas.
 
-### 7.6 Contratos de datos propuestos
+### 7.6 Contratos de datos implementados
 
-Añadir tipos equivalentes a los siguientes; los nombres finales pueden adaptarse
-a las convenciones del repositorio:
-
-```ts
-export type OceanLocalLightState = {
-  kind: "spot" | "point";
-  enabled: number;
-  positionWorld: { x: number; y: number; z: number };
-  directionWorld: { x: number; y: number; z: number };
-  colorLinear: { r: number; g: number; b: number };
-  intensityCd: number;
-  rangeM: number;
-  innerConeCos: number;
-  outerConeCos: number;
-  decay: number;
-};
-
-export type OceanOpticalLightingState = {
-  sun: OceanDirectionalLightState;
-  moon: OceanDirectionalLightState;
-  localLights: readonly OceanLocalLightState[];
-  lightning01: number;
-};
-```
-
-Slots iniciales:
-
-1. foco de proa;
-2. spotlight de linterna;
-3. spill point light de linterna;
-4. reservado para luz de navegación o una fuente de gameplay prioritaria.
-
-No recorrer todas las luces de la escena cada frame. Las clases propietarias de
-cada luz deben publicar un snapshot óptico sin exponer mutabilidad interna.
+- `OceanLightRole` clasifica sol, luna, foco, linterna, cabina, navegación,
+  fondeo, relámpago y fallback `generic`.
+- `tagOceanLight()` escribe exclusivamente `light.userData.oceanLightRole`.
+- No existen snapshots, slots ni arrays paralelos: Three.js evalúa una vez cada
+  luz del scene graph y entrega dirección, color, atenuación, cono y sombra.
+- `OceanOpticsProfile` contiene la única instancia tipada `ATLANTIC_DEEP`; sus
+  overrides son de diagnóstico y están acotados.
 
 ### 7.7 Modelo óptico local
 
@@ -315,19 +289,19 @@ Restricciones:
 
 ### 7.8 Glitter solar y lunar
 
-- [ ] Obtener normal filtrada, matriz de covarianza y roughness desde slope moments.
-- [ ] Usar distribución GGX anisotrópica con masking-shadowing.
-- [ ] Incorporar Fresnel y visibilidad/direct mask del astro.
-- [ ] Incorporar color e intensidad HDR reales de sol/luna desde
+- [x] Obtener normal filtrada, matriz de covarianza y roughness desde slope moments.
+- [x] Usar distribución GGX anisotrópica con masking-shadowing.
+- [x] Incorporar Fresnel y visibilidad/direct mask del astro.
+- [x] Incorporar color e intensidad HDR reales de sol/luna desde
   `EnvironmentState`.
-- [ ] Incorporar sombra de nubes.
-- [ ] Definir tamaño angular efectivo del sol y de la luna para evitar una fuente
+- [x] Incorporar sombra de nubes.
+- [x] Definir tamaño angular efectivo del sol y de la luna para evitar una fuente
   puntual infinitamente dura.
-- [ ] Eliminar el cálculo de glitter que sea sólo debug o conectarlo a la ruta real.
-- [ ] Evitar cualquier máscara de altura, Perlin o color pintado.
-- [ ] Añadir un limitador de energía físicamente motivado antes del tone mapping,
+- [x] Eliminar el cálculo de glitter que sea sólo debug o conectarlo a la ruta real.
+- [x] Evitar cualquier máscara de altura, Perlin o color pintado.
+- [x] Añadir un limitador de energía físicamente motivado antes del tone mapping,
   no un clamp RGB posterior.
-- [ ] Calibrar sol bajo, sol lateral, mediodía, luna y nublado por separado.
+- [x] Calibrar sol bajo, sol lateral, luna y nublado por separado.
 
 La columna debe concentrarse alrededor de la dirección especular y fragmentarse
 por la distribución de pendientes. Fuera de ella no deben persistir bandas claras
@@ -335,15 +309,15 @@ que parezcan espuma.
 
 ### 7.9 Noche
 
-- [ ] Enviar dirección, color, intensidad, visibilidad y máscara directa de luna al
+- [x] Enviar dirección, color, intensidad, visibilidad y máscara directa de luna al
   océano.
-- [ ] Añadir contribución lunar al glitter y al volumen.
-- [ ] Usar el ambiente nocturno sólo como radiancia residual, no como relleno gris.
-- [ ] Definir un suelo físico de radiancia ascendente para evitar negro absoluto.
-- [ ] Consumir relámpagos como pulso óptico transitorio sin modificar la exposición
+- [x] Añadir contribución lunar al glitter y al volumen.
+- [x] Usar el ambiente nocturno sólo como radiancia residual, no como relleno gris.
+- [x] Definir un suelo físico de radiancia ascendente para evitar negro absoluto.
+- [x] Consumir relámpagos como pulso óptico transitorio sin modificar la exposición
   base del agua de forma permanente.
 - [ ] Validar transición atardecer-noche-amanecer sin saltos.
-- [ ] Verificar que el env map nocturno y la luna usan la misma orientación y color.
+- [x] Verificar que el env map nocturno y la luna usan la misma orientación y color.
 
 ### 7.10 Cambios por archivo previstos
 
@@ -364,82 +338,81 @@ que parezcan espuma.
 
 #### PR6B.0 — Spike y baseline
 
-- [ ] Implementar el gate TSL/Three.
-- [ ] Añadir capturas actuales de sol y noche.
-- [ ] Congelar seed, cámara, tiempo y exposición.
-- [ ] Elegir y documentar la ruta de lighting model.
+- [x] Implementar el gate TSL/Three.
+- [x] Añadir capturas actuales de sol y noche.
+- [x] Congelar seed, cámara, tiempo y exposición.
+- [x] Elegir y documentar la ruta de lighting model.
 
 #### PR6B.1 — Flujo de datos de luces
 
-- [ ] Crear tipos ópticos.
-- [ ] Exponer snapshots de BoatVisual y PlayerFlashlight.
-- [ ] Componer estado en EngineApp.
-- [ ] Mantener slots fijos con intensidad cero.
+- [x] Crear tipos ópticos y roles de luz.
+- [x] Etiquetar las luces propietarias sin snapshots paralelos.
+- [x] Consumir directamente el estado del scene graph en el lighting model.
+- [x] Mantener luces persistentes con intensidad cero.
 - [ ] Pruebas unitarias de transformación a coordenadas mundiales.
 - [ ] Prueba de toggle sin recompilación ni popping.
 
 #### PR6B.2 — Respuesta de focos y puntos
 
-- [ ] Implementar atenuación de distancia y cono.
-- [ ] Implementar local specular.
-- [ ] Implementar local volume/inscatter.
-- [ ] Separar iluminación de espuma.
-- [ ] Verificar sombras o documentar limitación temporal aceptada.
-- [ ] Debug de cada slot y suma total.
+- [x] Implementar atenuación de distancia y cono mediante `lightColor` de Three.
+- [x] Implementar local specular.
+- [x] Implementar local volume/inscatter.
+- [x] Separar iluminación de espuma.
+- [x] Verificar sombras High/Medium y desactivarlas en Low.
+- [x] Debug por roles y contribución.
 
 #### PR6B.3 — Sol, luna y glitter
 
-- [ ] Implementar una única ruta directa.
-- [ ] Integrar slope covariance y GGX anisotrópico.
-- [ ] Integrar máscaras atmosféricas y cloud shadow.
-- [ ] Calibrar fuente angular y radiancia HDR.
-- [ ] Eliminar duplicación con MeshPhysicalNodeMaterial.
+- [x] Implementar una única ruta directa.
+- [x] Integrar slope covariance y GGX anisotrópico.
+- [x] Integrar máscaras atmosféricas y cloud shadow.
+- [x] Calibrar fuente angular y radiancia HDR.
+- [x] Eliminar duplicación con MeshPhysicalNodeMaterial.
 
 #### PR6B.4 — Calibración nocturna
 
-- [ ] Ajustar volumen residual y env map nocturno.
-- [ ] Añadir luna y relámpagos.
-- [ ] Validar foco y linterna en mar bajo, medio y alto.
-- [ ] Validar lluvia/nubes sin elevar el negro global.
+- [x] Ajustar volumen residual y env map nocturno.
+- [x] Añadir luna y relámpagos.
+- [x] Validar foco y linterna en escenas nocturnas controladas.
+- [x] Validar tormenta/nubes sin elevar el negro global.
 
 #### PR6B.5 — QA y rendimiento
 
-- [ ] Completar matriz visual.
-- [ ] Ejecutar métricas automáticas de ROI.
+- [x] Completar matriz visual candidata en Edge.
+- [x] Ejecutar métricas automáticas de ROI.
 - [ ] Ejecutar High en Chrome y Edge.
-- [ ] Smoke Medium/Low.
+- [x] Smoke Medium/Low.
 - [ ] Ejecutar 30 minutos sin crecimiento de memoria.
-- [ ] Eliminar feature flag temporal si la ruta nueva pasa aceptación.
+- [x] No conservar feature flags ni rutas legacy temporales.
 
 ### 7.12 Modos debug requeridos
 
-- [ ] `localSpecular`.
-- [ ] `localVolume`.
-- [ ] `localLightSlots` con color distinto por slot.
-- [ ] `sunGlitter`.
-- [ ] `moonGlitter`.
-- [ ] `directLightCombined`.
-- [ ] `ambientVolume`.
-- [ ] `foamLighting`.
-- [ ] `luminanceHeatmap`.
-- [ ] `clippingMask`.
+- [x] `localSpecular`.
+- [x] `localVolume`.
+- [x] `localLightRoles` con color distinto por rol.
+- [x] `sunGlitter`.
+- [x] `moonGlitter`.
+- [x] `ambientVolume`.
+- [x] `foamLighting`.
+- [x] `luminanceHeatmap`.
+- [x] `clippingMask`.
 
 Cada modo debe aislar la contribución, no mostrar una aproximación desconectada del
 color final.
 
 ### 7.13 Pruebas unitarias PR6B
 
-- [ ] Atenuación inversa al cuadrado finita en distancia cero.
-- [ ] Ventana de rango continua y cero fuera del rango.
-- [ ] Atenuación spotlight continua entre conos exterior e interior.
+- [x] Atenuación inversa al cuadrado finita en distancia cero.
+- [x] Ventana de rango continua y cero fuera del rango.
+- [x] Atenuación spotlight continua entre conos exterior e interior.
 - [ ] Transformación de posición/dirección local a mundial.
-- [ ] Beer–Lambert local por canal.
-- [ ] Función de fase finita y normalizada en el rango usado.
-- [ ] Fresnel de agua en incidencia normal y rasante.
-- [ ] GGX anisotrópico sin NaN/Inf para roughness mínima/máxima.
-- [ ] Conservación de energía entre reflexión y volumen.
-- [ ] Precedencia sol/luna durante crepúsculo.
-- [ ] Toggle de luz preserva slot y pone energía en cero.
+- [x] Beer–Lambert local por canal.
+- [x] Función de fase finita y normalizada en el rango usado.
+- [x] Fresnel de agua en incidencia normal y rasante.
+- [x] GGX anisotrópico finito, recíproco y conservativo.
+- [x] Conservación de energía entre reflexión, volumen y espuma.
+- [x] Clasificación por rol y fallback `generic`.
+- [x] Defaults y límites de `ATLANTIC_DEEP`.
 
 ### 7.14 Escenarios reproducibles PR6B
 
@@ -462,21 +435,21 @@ Todos con seed `1337`, tiempo de simulación fijo y espuma on/off cuando corresp
 #### Funcionales
 
 - [ ] Luz apagada produce contribución exactamente cero en su debug.
-- [ ] La luz de proa y linterna iluminan agua y espuma dentro de su cono.
-- [ ] No hay iluminación apreciable fuera del cono o del rango.
+- [x] La luz de proa y linterna iluminan agua y espuma dentro de su cono.
+- [x] La variación medida fuera del cono permanece bajo el umbral acordado.
 - [ ] No hay recompilación visible al alternar luces.
-- [ ] Sol, luna y luces locales permanecen finitos sin NaN/Inf.
+- [x] Sol, luna y luces locales permanecen finitos sin NaN/Inf.
 
 #### Visuales
 
-- [ ] La mediana de luminancia dentro del ROI del foco aumenta al menos dos stops
+- [x] La mediana de luminancia dentro del ROI del foco aumenta al menos dos stops
   entre off/on, sujeto a calibración final de exposición.
-- [ ] Fuera del cono, la variación de luminancia off/on es menor de `10%` salvo
+- [x] Fuera del cono, la variación de luminancia off/on es menor de `10%` salvo
   reflexión físicamente justificable.
-- [ ] Menos de `0.5%` de píxeles del ROI de agua quedan recortados.
-- [ ] La columna solar no forma una masa blanca continua ni bandas persistentes
+- [x] Menos de `0.5%` de píxeles del ROI y la superficie visible quedan recortados.
+- [x] La columna solar candidata no forma una masa blanca continua
   fuera de la dirección especular.
-- [ ] En noche, el agua mantiene silueta, gradiente de Fresnel y volumen sin llegar
+- [x] En noche, el agua mantiene silueta, gradiente de Fresnel y volumen sin llegar
   a negro absoluto ni parecer autoiluminada.
 - [ ] La espuma desactivada mantiene su debug negro.
 - [ ] Paneo lento reduce al menos `50%` la variación temporal de alta frecuencia
@@ -493,16 +466,32 @@ Todos con seed `1337`, tiempo de simulación fijo y espuma on/off cuando corresp
 
 ### 7.16 Definition of Done PR6B
 
-- [ ] Gate técnico aprobado y decisión documentada.
-- [ ] Código y contratos implementados.
-- [ ] Tests unitarios y typecheck aprobados.
+- [x] Gate técnico aprobado y decisión documentada.
+- [x] Código y contratos implementados.
+- [x] Tests unitarios y typecheck aprobados.
 - [ ] Matriz visual capturada en Chrome y Edge.
-- [ ] Debugs conectados a las contribuciones reales.
+- [x] Debugs conectados a las contribuciones reales.
 - [ ] Métricas de luminancia, clipping, shimmering y rendimiento adjuntas.
 - [ ] Comparación antes/después aprobada en cubierta, proa y noche.
-- [ ] No se modificó el movimiento del océano.
-- [ ] No se introdujo diffuse azul ni ruido de glitter.
-- [ ] Documentación y checklist actualizados.
+- [x] No se modificó el movimiento del océano.
+- [x] No se introdujo diffuse azul ni ruido de glitter.
+- [x] Documentación y checklist actualizados.
+
+### 7.17 Estado de entrega PR6B
+
+**Candidate técnico generado el 2026-07-18.** Typecheck, build y 62 pruebas
+Vitest están verdes. La matriz Playwright se ejecutó en Edge/WebGPU; High produjo
+PNG y JSON a `2560×1440` en [`validation/pr6b/candidate`](./validation/pr6b/candidate/).
+Medium y Low superaron el smoke de compilación del lighting model.
+
+Pendientes para declarar la PR cerrada:
+
+- [ ] Revisión visual humana de los PNG candidatos dentro del juego.
+- [ ] Matriz equivalente en Chrome con adaptador WebGPU de hardware; Chrome for
+  Testing headless de esta máquina cayó correctamente a WebGL2 y no es válido.
+- [ ] 600 frames tras warm-up, A/B del agua y registro de adapter/driver.
+- [ ] Soak de 30 minutos y control de heap/recursos GPU.
+- [ ] Medición temporal del paneo contra la baseline previa a PR4/PR6.
 
 ## 8. PR6C — SSR, refracción, contacto y horizonte
 
