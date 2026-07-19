@@ -27,6 +27,11 @@ export function beaufortToWindSpeed(beaufort: number): number {
   return 0.836 * Math.pow(Math.max(0, beaufort), 1.5);
 }
 
+/** Inverse of the empirical Beaufort relation used by the authoring UI. */
+export function windSpeedToBeaufort(windSpeedMs: number): number {
+  return Math.pow(Math.max(0, windSpeedMs) / 0.836, 2 / 3);
+}
+
 /**
  * JONSWAP peak angular frequency for wind speed U and fetch F, capped at the
  * fully developed (Pierson-Moskowitz) peak so long fetches cannot produce a

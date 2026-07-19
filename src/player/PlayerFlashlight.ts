@@ -16,7 +16,7 @@ export type FlashlightConfig = {
 
 export type FlashlightCue = "toggle" | "empty" | "charged";
 
-const SPILL_INTENSITY = 12;
+const SPILL_INTENSITY = 24;
 
 export class FlashlightBattery {
   private config: FlashlightConfig;

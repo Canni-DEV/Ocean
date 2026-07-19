@@ -175,5 +175,7 @@ describe("ocean light roles and profile", () => {
   it("does not hide celestial calibration in water-only default gains", () => {
     expect(ATLANTIC_DEEP.sunGlitterGain).toBe(1);
     expect(ATLANTIC_DEEP.moonGlitterGain).toBe(1);
+    expect(ATLANTIC_DEEP.lunarSkyIrradianceFactor).toBeGreaterThan(0);
+    expect(ATLANTIC_DEEP.lunarSkyIrradianceFactor).toBeLessThan(2);
   });
 });

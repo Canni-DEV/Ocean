@@ -25,7 +25,7 @@ import {
 import type { DebugRenderMode, DebugSettings, EnvironmentState, WeatherState } from "../engine/types";
 import type { BoatWaterInteraction } from "./BoatWaterInteraction";
 import type { OceanSimulation } from "./simulation/OceanSimulation";
-import { microSlopeVarianceForWind } from "./simulation/OceanMath";
+import { microSlopeVarianceForWind, precipitationSlopeVariance } from "./simulation/OceanMath";
 import { beaufortToWindSpeed } from "../state/seaState";
 import { ATLANTIC_DEEP } from "./OceanOpticsProfile";
 import {
@@ -52,7 +52,7 @@ type OceanUniformNodes = {
   worldOffset: AnyUniform<THREE.Vector2>;
   displacementToggle: AnyUniform<number>;
   foamIntensity: AnyUniform<number>;
-  precipitation: AnyUniform<number>;
+  precipitationSlopeVariance: AnyUniform<number>;
   turbidity: AnyUniform<number>;
   time: AnyUniform<number>;
   projectionScale: AnyUniform<number>;
@@ -61,6 +61,8 @@ type OceanUniformNodes = {
   microSlopeVariance: AnyUniform<number>;
   ambientColor: AnyUniform<THREE.Color>;
   ambientIntensity: AnyUniform<number>;
+  moonAmbientColor: AnyUniform<THREE.Color>;
+  moonAmbientIntensity: AnyUniform<number>;
   nightFactor: AnyUniform<number>;
   localScatterGain: AnyUniform<number>;
   phaseG: AnyUniform<number>;
@@ -257,7 +259,9 @@ export class OceanRenderer {
     this.uniforms.worldOffset.value.set(camera.position.x + originOffset.x, camera.position.z + originOffset.z);
     this.uniforms.displacementToggle.value = settings.oceanDisplacement ? 1 : 0;
     this.uniforms.foamIntensity.value = settings.showFoam ? settings.foamIntensity : 0;
-    this.uniforms.precipitation.value = weather.precipitation;
+    this.uniforms.precipitationSlopeVariance.value = settings.showRain && settings.oceanSurfacePrecipitationEnabled
+      ? precipitationSlopeVariance(weather.precipitation)
+      : 0;
     this.uniforms.turbidity.value = settings.waterTurbidity;
     this.uniforms.time.value = timeSeconds;
     const fovRad = THREE.MathUtils.degToRad((camera as THREE.PerspectiveCamera).fov ?? 60);
@@ -272,6 +276,8 @@ export class OceanRenderer {
     this.uniforms.microSlopeVariance.value = microSlopeVarianceForWind(effectiveWindSpeed);
     this.uniforms.ambientColor.value.set(environment.ambientColor);
     this.uniforms.ambientIntensity.value = environment.ambientIntensity;
+    this.uniforms.moonAmbientColor.value.set(environment.moonColor);
+    this.uniforms.moonAmbientIntensity.value = environment.moonIntensity;
     const daylight = THREE.MathUtils.smoothstep(environment.celestial.sunDirection.y, -0.08, 0.42);
     this.uniforms.nightFactor.value = 1 - daylight;
     this.uniforms.localScatterGain.value = settings.oceanLocalScatterGain;
@@ -354,7 +360,7 @@ function createWaterMaterial(
     worldOffset: u(new THREE.Vector2()),
     displacementToggle: u(1),
     foamIntensity: u(1),
-    precipitation: u(0),
+    precipitationSlopeVariance: u(0),
     turbidity: u(0.25),
     time: u(0),
     projectionScale: u(720),
@@ -363,6 +369,8 @@ function createWaterMaterial(
     microSlopeVariance: u(0.012),
     ambientColor: u(new THREE.Color("#89a8b8")),
     ambientIntensity: u(1),
+    moonAmbientColor: u(new THREE.Color("#b8caff")),
+    moonAmbientIntensity: u(0),
     nightFactor: u(0),
     localScatterGain: u(ATLANTIC_DEEP.localScatterGain),
     phaseG: u(ATLANTIC_DEEP.localPhaseG),
@@ -585,13 +593,6 @@ function createWaterMaterial(
   varianceX = varianceX.max(0);
   varianceZ = varianceZ.max(0);
 
-  // Rain ripples: fast animated high-frequency normal perturbation
-  const rippleStrength = uniforms.precipitation.mul(0.16);
-  const rippleA = mx_noise_float(vSampleXZ.mul(1.35).add(vec2(uniforms.time.mul(9.3), uniforms.time.mul(-7.1))));
-  const rippleB = mx_noise_float(vSampleXZ.mul(1.62).sub(vec2(uniforms.time.mul(6.4), uniforms.time.mul(8.8))));
-  const rippleFade = float(1).sub(smoothstep(float(30), float(140), vDistance));
-  slope = slope.add(vec2(rippleA, rippleB).mul(rippleStrength).mul(rippleFade));
-
   const interactionTexel = uniforms.boatInteractionUvTexel;
   const interactionCell = uniforms.boatInteractionCellMeters.mul(2);
   const interactionLeft = sampleBoatDynamics(vSampleXZ, vec2(interactionTexel.negate(), 0));
@@ -613,7 +614,9 @@ function createWaterMaterial(
   const boatFoam = sampleBoatFoam(vSampleXZ);
   const boatFoamWeighted = boatFoam.r.mul(0.9).max(boatFoam.g).max(boatFoam.b.mul(0.9));
   const foamGrain = mx_noise_float(vSampleXZ.mul(0.9)).mul(0.5).add(0.5);
-  const foamGrainFine = mx_noise_float(vSampleXZ.mul(3.7).add(uniforms.time.mul(0.06))).mul(0.5).add(0.5);
+  // Static world-space breakup only. An independently animated grain slid
+  // across the FFT and read as a second, non-physical surface flow.
+  const foamGrainFine = mx_noise_float(vSampleXZ.mul(3.7).add(vec2(17.3, -8.1))).mul(0.5).add(0.5);
   const oceanFoamAmount = foamRaw
     .mul(uniforms.foamIntensity)
     .mul(foamGrain.mul(0.45).add(0.62))
@@ -641,10 +644,9 @@ function createWaterMaterial(
     .add(normalDy.dot(normalDy))
     .mul(0.25)
     .clamp(0, 0.08);
-  const rainVariance = uniforms.precipitation.mul(0.015);
   const totalVariance = varianceX.add(varianceZ).mul(0.5)
     .add(screenVariance)
-    .add(rainVariance)
+    .add(uniforms.precipitationSlopeVariance)
     .max(0);
   const alphaSquared = float(Math.pow(ATLANTIC_DEEP.waterRoughnessMin ** 2, 2)).add(totalVariance.mul(0.22));
   const waterRoughness = alphaSquared.pow(0.25)
@@ -696,7 +698,12 @@ function createWaterMaterial(
   const extinction = absorption.add(scattering);
   const transmittance = exp(extinction.mul(opticalPath).negate());
   const scatteringAlbedo = scattering.div(extinction.max(0.0001));
-  const ambientRadiance = uniforms.ambientColor.mul(uniforms.ambientIntensity);
+  const lunarSkyRadiance = uniforms.moonAmbientColor
+    .mul(uniforms.moonAmbientIntensity)
+    .mul(float(ATLANTIC_DEEP.lunarSkyIrradianceFactor));
+  const ambientRadiance = uniforms.ambientColor
+    .mul(uniforms.ambientIntensity)
+    .add(lunarSkyRadiance);
   const upwellingGain = mix(
     float(ATLANTIC_DEEP.upwellingDay),
     uniforms.nightUpwellingGain,

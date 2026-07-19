@@ -13,6 +13,7 @@ export type OceanOpticsProfile = {
   dayIblIntensity: number;
   sunGlitterGain: number;
   moonGlitterGain: number;
+  lunarSkyIrradianceFactor: number;
   localPhaseG: number;
   localOpticalPathM: number;
   localScatterGain: number;
@@ -33,14 +34,17 @@ export const ATLANTIC_DEEP: Readonly<OceanOpticsProfile> = Object.freeze({
   effectiveDepthBaseM: 10,
   effectiveDepthTurbidM: 4,
   upwellingDay: 0.55,
-  upwellingNight: 0.75,
-  nightIblIntensity: 0.015,
+  upwellingNight: 1.1,
+  nightIblIntensity: 0.06,
   dayIblIntensity: 0.2,
   // Unit gains keep celestial energy in the shared scene lights. The previous
   // 0.035/0.51 values compensated for an unnormalised GGX distribution and
   // must not remain as hidden, water-only light calibration.
   sunGlitterGain: 1,
   moonGlitterGain: 1,
+  // Broad moonlit-sky irradiance used by subsurface upwelling. Direct moon GGX
+  // remains separate; weather/elevation already attenuate moonIntensity.
+  lunarSkyIrradianceFactor: 1.7,
   localPhaseG: 0.55,
   localOpticalPathM: 6,
   localScatterGain: 1,

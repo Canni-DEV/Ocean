@@ -28,7 +28,9 @@ const SCENARIOS = [
   "pr6b-storm-fixed-lightning",
   "pr6b-low-sun-bow",
   "pr6b-sun-lateral",
-  "pr6b-cloudy-deck"
+  "pr6b-cloudy-deck",
+  "storm-surface-off",
+  "storm-surface-on"
 ] as const;
 
 for (const scenario of SCENARIOS) {
@@ -77,7 +79,7 @@ test("work light adds at least two stops inside its controlled ROI", async ({ pa
   const onPng = await page.locator("canvas").first().screenshot();
   const on = measureRoi(onPng, { x0: 0.3, x1: 0.55, y0: 0.46, y1: 0.63 });
   const onOutside = measureRoi(onPng, { x0: 0.72, x1: 0.96, y0: 0.43, y1: 0.86 });
-  expect(on.medianLuminance).toBeGreaterThanOrEqual(off.medianLuminance * 4);
+  expect(on.medianLuminance).toBeGreaterThanOrEqual(Math.max(off.medianLuminance * 4, 0.01));
   expect(on.clippedFraction).toBeLessThan(0.005);
   expect(Math.abs(onOutside.medianLuminance - offOutside.medianLuminance) / Math.max(offOutside.medianLuminance, 1e-4))
     .toBeLessThan(0.1);
@@ -92,7 +94,7 @@ test("flashlight adds two stops without clipping its water footprint", async ({ 
   const on = measureRoi(await page.locator("canvas").first().screenshot(), {
     x0: 0.38, x1: 0.62, y0: 0.48, y1: 0.78
   });
-  expect(on.medianLuminance).toBeGreaterThanOrEqual(off.medianLuminance * 4);
+  expect(on.medianLuminance).toBeGreaterThanOrEqual(Math.max(off.medianLuminance * 4, 0.01));
   expect(on.clippedFraction).toBeLessThan(0.005);
 });
 

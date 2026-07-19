@@ -25,10 +25,11 @@ export type OceanValidationScenario = {
   quality: QualityTier;
   anisotropyEnabled: boolean;
   slopeMipOverride: number;
+  surfacePrecipitation: boolean;
 };
 
 type DefaultedScenarioField = "lights" | "lightning" | "cameraMotion" | "debugView" | "quality" |
-  "anisotropyEnabled" | "slopeMipOverride";
+  "anisotropyEnabled" | "slopeMipOverride" | "surfacePrecipitation";
 type ScenarioInput = Omit<OceanValidationScenario, DefaultedScenarioField> &
   Partial<Pick<OceanValidationScenario, DefaultedScenarioField>>;
 
@@ -50,7 +51,8 @@ function scenario(input: ScenarioInput): OceanValidationScenario {
     debugView: input.debugView ?? "final",
     quality: input.quality ?? "high",
     anisotropyEnabled: input.anisotropyEnabled ?? true,
-    slopeMipOverride: input.slopeMipOverride ?? -1
+    slopeMipOverride: input.slopeMipOverride ?? -1,
+    surfacePrecipitation: input.surfacePrecipitation ?? true
   };
 }
 
@@ -116,7 +118,9 @@ export const OCEAN_VALIDATION_SCENARIOS: readonly OceanValidationScenario[] = [
   scenario({ id: "pr6b-sun-lateral", camera: "rail", sea: "medium", weather: "clear", worldTimeHours: 14.5, simulationTimeSeconds: 120, foam: true, seed: 1337 }),
   scenario({ id: "pr6b-sun-column", camera: "sunColumn", sea: "medium", weather: "clear", worldTimeHours: 9, simulationTimeSeconds: 120, foam: false, seed: 1337 }),
   scenario({ id: "pr6b-cloudy-deck", camera: "bridge", sea: "medium", weather: "cloudy", worldTimeHours: 15.2, simulationTimeSeconds: 120, foam: true, seed: 1337 }),
-  scenario({ id: "pr6b-horizon-pan", camera: "bridge", sea: "medium", weather: "clear", worldTimeHours: 16, simulationTimeSeconds: 120, foam: false, seed: 1337, cameraMotion: "pan-slow" })
+  scenario({ id: "pr6b-horizon-pan", camera: "bridge", sea: "medium", weather: "clear", worldTimeHours: 16, simulationTimeSeconds: 120, foam: false, seed: 1337, cameraMotion: "pan-slow" }),
+  scenario({ id: "storm-surface-off", camera: "bridge", sea: "high", weather: "storm", worldTimeHours: 15.2, simulationTimeSeconds: 120, foam: false, seed: 1337, surfacePrecipitation: false }),
+  scenario({ id: "storm-surface-on", camera: "bridge", sea: "high", weather: "storm", worldTimeHours: 15.2, simulationTimeSeconds: 120, foam: false, seed: 1337, surfacePrecipitation: true })
 ];
 
 export function readOceanValidationScenario(search: string): OceanValidationScenario | null {
@@ -135,7 +139,8 @@ export function readOceanValidationScenario(search: string): OceanValidationScen
     debugView: parseOceanDebugView(params.get("debugOcean"), base.debugView),
     quality: parseQuality(params.get("quality"), base.quality),
     anisotropyEnabled: parseBoolean(params.get("anisotropy"), base.anisotropyEnabled),
-    slopeMipOverride: parseSlopeMipOverride(params.get("slopeMip"), base.slopeMipOverride)
+    slopeMipOverride: parseSlopeMipOverride(params.get("slopeMip"), base.slopeMipOverride),
+    surfacePrecipitation: parseBoolean(params.get("surfacePrecipitation"), base.surfacePrecipitation)
   };
 }
 
@@ -157,6 +162,7 @@ export function applyOceanValidationSettings(
     renderMode: current.debugView,
     oceanAnisotropyEnabled: current.anisotropyEnabled,
     oceanSlopeMipOverride: current.slopeMipOverride,
+    oceanSurfacePrecipitationEnabled: current.surfacePrecipitation,
     boatLightsOn: current.lights.work,
     lightningOverride: current.lightning,
     boatWaterInteraction: false,

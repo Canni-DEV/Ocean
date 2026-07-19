@@ -36,7 +36,7 @@ This prototype is intentionally WebGPU-only. It should fail with a clear message
 
 ## Ocean validation harness
 
-Use `?oceanValidation=<scenario>&foam=0|1&seed=<number>&quality=high|medium|low` to load a fixed validation state. PR6B adds deterministic `lights=work,flashlight,cabin,navigation,anchor`, `lightning=weather|off|fixed`, `debugOcean=<renderMode>` and slow camera pan scenarios. PR6B.6 also adds `hour=<0..24>`, `anisotropy=0|1` and `slopeMip=auto|0..12` for reproducible artifact isolation. Runtime metrics and spectrum estimates are exposed as `window.__oceanValidation`. `npm run test:visual` executes the Playwright matrix and `npm run capture:ocean-pr6b` records Edge/WebGPU PNG+JSON candidates at `2560×1440`.
+Use `?oceanValidation=<scenario>&foam=0|1&seed=<number>&quality=high|medium|low` to load a fixed validation state. PR6B adds deterministic `lights=work,flashlight,cabin,navigation,anchor`, `lightning=weather|off|fixed`, `debugOcean=<renderMode>` and slow camera pan scenarios. PR6B.6 also adds `hour=<0..24>`, `anisotropy=0|1` and `slopeMip=auto|0..12` for reproducible artifact isolation. PR6B.8 adds `surfacePrecipitation=0|1` plus the paired scenarios `storm-surface-off` and `storm-surface-on`; all four combinations with `foam=0|1` retain the same seed, time, camera and FFT. Runtime metrics and spectrum estimates are exposed as `window.__oceanValidation`. `npm run test:visual` executes the Playwright matrix and `npm run capture:ocean-pr6b` records Edge/WebGPU PNG+JSON candidates at `2560×1440`.
 
 ## PR6B direct ocean lighting
 

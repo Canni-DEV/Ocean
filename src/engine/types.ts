@@ -146,6 +146,16 @@ export type FishingDebugState = {
   boomMaxDeg: number;
 };
 
+export type SeaStateDebugState = {
+  source: SeaStateControlMode;
+  windSpeedMs: number;
+  windDirectionDeg: number;
+  swellDirectionDeg: number;
+  swellStrength: number;
+  weatherTransitionProgress: number;
+  precipitation: number;
+};
+
 export type EngineMetrics = {
   backend: "webgpu";
   fps: number;
@@ -165,6 +175,7 @@ export type EngineMetrics = {
     slopeVariance: number;
     correlation: number;
   }>;
+  seaState: SeaStateDebugState | null;
   seaLevelAtCameraM: number | null;
   worldTimeHours: number;
   camera: CameraDebugState;
@@ -221,6 +232,8 @@ export type DebugSettings = {
   oceanSunGlitterGain: number;
   oceanMoonGlitterGain: number;
   oceanLocalOpticalPathM: number;
+  /** Debug/harness gate for the small statistical roughness increase caused by precipitation. */
+  oceanSurfacePrecipitationEnabled: boolean;
   /** PR6B diagnostic: disables covariance-driven anisotropy without changing waves. */
   oceanAnisotropyEnabled: boolean;
   /** PR6B diagnostic: -1 selects projected mip automatically, otherwise fixes a mip level. */

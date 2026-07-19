@@ -34,7 +34,9 @@ function isRemovedModelMesh(object: THREE.Object3D): boolean {
 }
 
 /** Intensidad ON del foco de proa; idle usa 0 para no reconstruir pipelines WebGPU. */
-const FORWARD_SPOT_INTENSITY = 560;
+// Marine searchlight calibration in candela. At 30 m this yields roughly
+// 44 lux on-axis before cone, shadow and BRDF attenuation.
+const FORWARD_SPOT_INTENSITY = 40_000;
 
 /** Visual del barco: carga el GLB definitivo al inicio y expone collider/rigs. */
 export class BoatVisual {

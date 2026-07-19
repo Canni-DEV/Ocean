@@ -812,6 +812,7 @@ export class EngineApp {
       camera.z + this.originOffsetMeters.z
     );
 
+    const seaState = this.seaStateCurrent;
     const metrics: EngineMetrics = {
       backend: "webgpu",
       fps: this.stats.fps,
@@ -829,6 +830,15 @@ export class EngineApp {
       cloudComputeMs: this.cloudComputeMs,
       depthPrepassMs: this.depthPrepassMs,
       oceanSpectrum: this.simulation?.metrics.map((metric) => ({ ...metric })) ?? [],
+      seaState: seaState ? {
+        source: this.settings.seaStateControlMode,
+        windSpeedMs: seaState.windSpeedMs,
+        windDirectionDeg: radiansToDegrees360(seaState.windDirectionRad),
+        swellDirectionDeg: radiansToDegrees360(seaState.swellDirectionRad),
+        swellStrength: seaState.swellAmount,
+        weatherTransitionProgress: THREE.MathUtils.clamp(this.weatherCurrent.transitionProgress, 0, 1),
+        precipitation: THREE.MathUtils.clamp(this.weatherCurrent.precipitation, 0, 1)
+      } : null,
       seaLevelAtCameraM: seaLevel ?? null,
       worldTimeHours: this.worldTimeHours,
       camera: {
@@ -919,6 +929,10 @@ function percentile(values: readonly number[], fraction: number): number | null 
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))];
+}
+
+function radiansToDegrees360(radians: number): number {
+  return ((THREE.MathUtils.radToDeg(radians) % 360) + 360) % 360;
 }
 
 function flashlightConfigFromSettings(settings: DebugSettings): FlashlightConfig {

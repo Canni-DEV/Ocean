@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_DEBUG_SETTINGS } from "./debugStore";
 import { WEATHER_PRESETS } from "./weather";
-import { beaufortToWindSpeed, buildSeaState } from "./seaState";
+import { beaufortToWindSpeed, buildSeaState, windSpeedToBeaufort } from "./seaState";
 
 describe("sea-state source precedence", () => {
+  it("round-trips the effective Beaufort value shown by telemetry", () => {
+    for (const beaufort of [0, 3.5, 8, 12]) {
+      expect(windSpeedToBeaufort(beaufortToWindSpeed(beaufort))).toBeCloseTo(beaufort, 10);
+    }
+  });
+
   it("uses weather wind and swell by default", () => {
     const weather = WEATHER_PRESETS.storm;
     const state = buildSeaState(weather, { ...DEFAULT_DEBUG_SETTINGS, seaStateControlMode: "weather" });

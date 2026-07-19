@@ -524,7 +524,9 @@ export class AtmosphereSystem {
     const moonDirectMask = directLightMask(moon.y);
     const twilightResidual = twilightFactor(sun.y);
     const starVisibility = night * (1 - weather.cloudCoverage) * (1 - weather.humidity * 0.35);
-    const ambientIntensity = THREE.MathUtils.lerp(0.08, 0.92, daylight) * (1 - cloudShadow * 0.55) + night * 0.07;
+    // A restrained shared night fill keeps boat and sea above digital black.
+    // It is environmental radiance, not an ocean-only emissive workaround.
+    const ambientIntensity = THREE.MathUtils.lerp(0.08, 0.92, daylight) * (1 - cloudShadow * 0.55) + night * 0.18;
 
     return {
       skyZenithColor: `#${zenith.getHexString()}`,
@@ -536,7 +538,9 @@ export class AtmosphereSystem {
       sunColor: `#${new THREE.Color("#fff5d0").lerp(new THREE.Color("#ff9f58"), twilightGlow * 0.45).getHexString()}`,
       sunIntensity: THREE.MathUtils.lerp(0, 3.6, sunVisibility * sunDirectMask),
       moonColor: "#b8caff",
-      moonIntensity: THREE.MathUtils.lerp(0, 0.36, moonVisibility * moonDirectMask),
+      // Cinematic full-moon upper bound in lux. It remains shared by every
+      // material and is still attenuated by elevation, weather and clouds.
+      moonIntensity: THREE.MathUtils.lerp(0, 0.65, moonVisibility * moonDirectMask),
       cloudShadow,
       exposure: THREE.MathUtils.clamp(1 + exposureBias - cloudShadow * 0.18 + twilightGlow * 0.08, 0.45, 1.6),
       celestial: {

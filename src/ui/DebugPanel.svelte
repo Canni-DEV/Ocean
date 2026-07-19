@@ -8,7 +8,7 @@
     QualityTier,
     WeatherPresetName
   } from "../engine/types";
-  import { beaufortToWindSpeed } from "../state/seaState";
+  import { beaufortToWindSpeed, windSpeedToBeaufort } from "../state/seaState";
   import { ATLANTIC_DEEP, OCEAN_OPTICS_OVERRIDE_LIMITS } from "../ocean/OceanOpticsProfile";
 
   type Props = {
@@ -140,8 +140,12 @@
     window.setTimeout(() => { opticsCopied = false; }, 1400);
   }
 
-  const beaufortLabel = $derived(beaufortLabels[Math.round(Math.min(12, Math.max(0, settings.beaufort)))]);
-  const windSpeed = $derived(beaufortToWindSpeed(settings.beaufort));
+  const fallbackWindSpeed = $derived(beaufortToWindSpeed(settings.beaufort));
+  const effectiveWindSpeed = $derived(metrics.seaState?.windSpeedMs ?? fallbackWindSpeed);
+  const effectiveBeaufort = $derived(windSpeedToBeaufort(effectiveWindSpeed));
+  const effectiveBeaufortLabel = $derived(
+    beaufortLabels[Math.round(Math.min(12, Math.max(0, effectiveBeaufort)))]
+  );
 
   const metricCards = $derived([
     { label: "FPS", value: metrics.fps.toFixed(0) },
@@ -360,10 +364,17 @@
       </select>
     </label>
     <label class="block">
-      <span class="!text-sky-300">Estado del mar — Beaufort {settings.beaufort.toFixed(1)}</span>
+      <span class="!text-sky-300">Estado del mar — Beaufort {effectiveBeaufort.toFixed(1)}</span>
       <input disabled={settings.seaStateControlMode === "weather"} min="0" max="12" step="0.1" type="range" value={settings.beaufort} oninput={(event) => patch({ beaufort: numberValue(event) })} />
     </label>
-    <p class="mt-1 text-[11px] text-slate-400">{beaufortLabel} · viento {windSpeed.toFixed(1)} m/s</p>
+    <p class="mt-1 text-[11px] text-slate-400">
+      {effectiveBeaufortLabel} · viento efectivo {effectiveWindSpeed.toFixed(1)} m/s
+    </p>
+    <p class="mt-0.5 text-[11px] text-slate-400">
+      Dir viento {metrics.seaState?.windDirectionDeg.toFixed(0) ?? "n/a"}° ·
+      swell {metrics.seaState?.swellDirectionDeg.toFixed(0) ?? "n/a"}° ·
+      transición {((metrics.seaState?.weatherTransitionProgress ?? 0) * 100).toFixed(0)}%
+    </p>
   </section>
 
   <button
@@ -604,7 +615,7 @@
         </label>
         <label>
           <span>Intensidad {settings.flashlightIntensityCd.toFixed(0)} cd</span>
-          <input min="100" max="2500" step="25" type="range" value={settings.flashlightIntensityCd} oninput={(event) => patch({ flashlightIntensityCd: numberValue(event) })} />
+          <input min="100" max="5000" step="25" type="range" value={settings.flashlightIntensityCd} oninput={(event) => patch({ flashlightIntensityCd: numberValue(event) })} />
         </label>
         <label>
           <span>Alcance {settings.flashlightRangeM.toFixed(0)} m</span>

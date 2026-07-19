@@ -6,6 +6,7 @@ import {
   deriveCascadeSeed,
   fresnelSchlickWater,
   microSlopeVarianceForWind,
+  precipitationSlopeVariance,
   normalFromDerivatives,
   overlapWeights,
   pearsonCorrelation,
@@ -65,6 +66,13 @@ describe("ocean math", () => {
     expect(microSlopeVarianceForWind(0)).toBeCloseTo(0.004, 8);
     expect(microSlopeVarianceForWind(10)).toBeGreaterThan(microSlopeVarianceForWind(4));
     expect(microSlopeVarianceForWind(40)).toBeCloseTo(0.09, 8);
+  });
+
+  it("keeps precipitation as a moderate statistical roughness signal", () => {
+    expect(precipitationSlopeVariance(-1)).toBe(0);
+    expect(precipitationSlopeVariance(0.5)).toBeCloseTo(0.001, 12);
+    expect(precipitationSlopeVariance(1)).toBeCloseTo(0.002, 12);
+    expect(precipitationSlopeVariance(4)).toBeCloseTo(0.002, 12);
   });
 
   it("reduces slope moments exactly and reconstructs a PSD covariance", () => {

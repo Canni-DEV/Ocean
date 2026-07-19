@@ -82,6 +82,15 @@ export function microSlopeVarianceForWind(windSpeedMs: number): number {
   return Math.min(0.09, Math.max(0.004, 0.003 + 0.00512 * Math.max(0, windSpeedMs)));
 }
 
+/**
+ * Rain is rendered geometrically as particles. At the ocean surface it only
+ * broadens the unresolved facet distribution very slightly; it must not add a
+ * second animated normal field unrelated to the FFT.
+ */
+export function precipitationSlopeVariance(precipitation: number): number {
+  return Math.min(1, Math.max(0, precipitation)) * 0.002;
+}
+
 export function slopeMoments(slopeX: number, slopeZ: number): SlopeMoments {
   return {
     meanX: slopeX,

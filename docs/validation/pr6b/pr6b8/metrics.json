@@ -1,0 +1,114 @@
+{
+  "capturedAt": "2026-07-18",
+  "viewport": [
+    1280,
+    720
+  ],
+  "seed": 1337,
+  "simulationTimeSeconds": 120,
+  "moon": {
+    "medianLuminance": 0.01949111241973005,
+    "digitalBlackFraction": 0,
+    "clippedFraction": 0
+  },
+  "localLights": {
+    "workOff": {
+      "median": 0.012257125605455211,
+      "mean": 0.011421441798108903,
+      "black": 0.03417008196721311,
+      "clip": 0
+    },
+    "workOn": {
+      "median": 0.05918198783125951,
+      "mean": 0.23023776871979595,
+      "black": 0.03393954918032787,
+      "clip": 0
+    },
+    "workOutsideOff": {
+      "median": 0.015567674731165049,
+      "mean": 0.013346857389308768,
+      "black": 0.08707575916780498,
+      "clip": 0
+    },
+    "workOutsideOn": {
+      "median": 0.015567674731165049,
+      "mean": 0.013347326231111746,
+      "black": 0.08708626668067668,
+      "clip": 0
+    },
+    "flashOff": {
+      "median": 0.01926981080826988,
+      "mean": 0.01650317107553769,
+      "black": 0,
+      "clip": 0
+    },
+    "flashOn": {
+      "median": 0.08254889151864456,
+      "mean": 0.09749400687353187,
+      "black": 0,
+      "clip": 0
+    }
+  },
+  "smoke": [
+    {
+      "name": "cabin",
+      "metric": {
+        "median": 0.009842076255606323,
+        "mean": 0.019727557013496752,
+        "black": 0.20672134915914722,
+        "clip": 0.0017659915276191588
+      },
+      "errorCount": 0
+    },
+    {
+      "name": "navigation",
+      "metric": {
+        "median": 0.021766968466082916,
+        "mean": 0.021962235396170378,
+        "black": 0.000058379885210550705,
+        "clip": 0.000018243714128297097
+      },
+      "errorCount": 0
+    },
+    {
+      "name": "anchor",
+      "metric": {
+        "median": 0.021766968466082916,
+        "mean": 0.021949694967819997,
+        "black": 0.00008209671357733693,
+        "clip": 0.000029189942605275353
+      },
+      "errorCount": 0
+    },
+    {
+      "name": "lightning",
+      "metric": {
+        "median": 0.003749830710686337,
+        "mean": 0.003405524491444207,
+        "black": 0.07978523499728168,
+        "clip": 0
+      },
+      "errorCount": 0
+    },
+    {
+      "name": "moon-medium",
+      "metric": {
+        "median": 0.00953112958441078,
+        "mean": 0.009870794533313097,
+        "black": 0.24622446336114892,
+        "clip": 0
+      },
+      "errorCount": 0
+    },
+    {
+      "name": "moon-low",
+      "metric": {
+        "median": 0.011128955573519254,
+        "mean": 0.010348198265435055,
+        "black": 0.2483042467717748,
+        "clip": 0
+      },
+      "errorCount": 0
+    }
+  ]
+}

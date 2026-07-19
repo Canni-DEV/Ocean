@@ -515,6 +515,21 @@ Pendientes para declarar la PR cerrada:
 - [ ] Inspección humana de las horas reportadas `7.05`, `7.92`, `18.15` y
   `19.54`, con espuma on/off y comparativas anisotropía/mip.
 
+### 7.18 PR6B.8 — tormenta coherente y cierre técnico nocturno
+
+- [x] Eliminar ambas normales procedurales de lluvia no alineadas con la FFT.
+- [x] Mantener precipitación sólo como partículas y varianza estadística máxima
+  de pendiente `0.002`.
+- [x] Congelar el grano fino decorativo de espuma en coordenadas mundiales.
+- [x] Exponer viento efectivo, direcciones de viento/swell y transición en HUD.
+- [x] Añadir A/B `storm-surface-off/on` con `foam=0/1`, seed y FFT idénticos.
+- [x] Luna legible: mediana ROI `0.01949`, negro digital `0%`, clipping `0%`.
+- [x] Foco `4.83×` y linterna `4.28×` sobre sus baselines; fuera del cono sin
+  variación medible y sin clipping.
+- [x] Smoke WebGPU sin errores para cabina, navegación, fondeo, relámpago,
+  Medium y Low.
+- [ ] Aprobación estética humana de `docs/validation/pr6b/pr6b8/`.
+
 ## 8. PR6C — SSR, refracción, contacto y horizonte
 
 - [ ] Capturar scene color y depth compatibles con WebGPU.
