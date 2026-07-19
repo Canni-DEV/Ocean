@@ -945,7 +945,16 @@ function createWaterMaterial(
     .mul(uniforms.contactEnabled);
   const resolvedWaterVolume = mix(waterVolume, refractedVolume, refractionValidity)
     .mul(float(1).sub(contactAmount));
-  const ambientVolume = resolvedWaterVolume
+  // Night: pull ambient upwelling toward desaturated navy so residual fill
+  // reads as moonlit water instead of fluorescent scattering albedo.
+  const volumeLuma = resolvedWaterVolume.dot(vec3(0.2126, 0.7152, 0.0722));
+  const nightDesaturatedVolume = vec3(volumeLuma).mul(vec3(0.5, 1.0, 1.75));
+  const tonedWaterVolume = mix(
+    resolvedWaterVolume,
+    nightDesaturatedVolume,
+    uniforms.nightFactor.mul(0.55)
+  );
+  const ambientVolume = tonedWaterVolume
     .mul(float(1).sub(fresnel))
     .mul(float(1).sub(foamBlend));
   material.emissiveNode = ambientVolume;
@@ -985,6 +994,7 @@ function createWaterMaterial(
     phaseG: uniforms.phaseG,
     sunGlitterGain: uniforms.sunGlitterGain,
     moonGlitterGain: uniforms.moonGlitterGain,
+    moonVolumeScatterGain: float(ATLANTIC_DEEP.moonVolumeScatterGain),
     iblGain: uniforms.iblGain,
     ssrRadiance: ssrSample.rgb,
     ssrConfidence: ssrConfidenceSample,

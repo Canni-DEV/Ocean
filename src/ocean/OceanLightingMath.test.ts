@@ -177,5 +177,8 @@ describe("ocean light roles and profile", () => {
     expect(ATLANTIC_DEEP.moonGlitterGain).toBe(1);
     expect(ATLANTIC_DEEP.lunarSkyIrradianceFactor).toBeGreaterThan(0);
     expect(ATLANTIC_DEEP.lunarSkyIrradianceFactor).toBeLessThan(2);
+    expect(ATLANTIC_DEEP.upwellingNight).toBeLessThan(ATLANTIC_DEEP.upwellingDay);
+    expect(ATLANTIC_DEEP.moonVolumeScatterGain).toBeGreaterThan(0);
+    expect(ATLANTIC_DEEP.moonVolumeScatterGain).toBeLessThan(1);
   });
 });

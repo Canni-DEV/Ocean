@@ -26,6 +26,7 @@ export type OceanLightingContext = {
   phaseG: NodeRef;
   sunGlitterGain: NodeRef;
   moonGlitterGain: NodeRef;
+  moonVolumeScatterGain: NodeRef;
   iblGain: NodeRef;
   ssrRadiance: NodeRef;
   ssrConfidence: NodeRef;
@@ -152,7 +153,8 @@ class OceanLightingModel extends PhysicalLightingModel {
       .mul(phase)
       .mul(this.ocean.localScatterGain)
       .mul(float(1).sub(this.ocean.fresnel))
-      .mul(float(1).sub(this.ocean.foamBlend));
+      .mul(float(1).sub(this.ocean.foamBlend))
+      .mul(role === "moon" ? this.ocean.moonVolumeScatterGain : float(1));
 
     reflectedLight.directSpecular.addAssign(specular);
     reflectedLight.directDiffuse.addAssign(foamDiffuse.add(volume));
