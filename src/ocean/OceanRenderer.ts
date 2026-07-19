@@ -2,19 +2,28 @@ import * as THREE from "three/webgpu";
 import {
   Fn,
   cameraPosition,
+  cameraProjectionMatrixInverse,
   color,
+  depth,
   exp,
   float,
   log2,
   mix,
   mx_noise_float,
   output,
+  getViewPosition,
+  ivec2,
   positionGeometry,
   positionWorld,
+  positionView,
+  screenUV,
   smoothstep,
   sqrt,
   step,
+  storageTexture,
   texture,
+  textureLoad,
+  textureSize,
   transformNormalToView,
   uniform,
   vec2,
@@ -28,6 +37,7 @@ import type { OceanSimulation } from "./simulation/OceanSimulation";
 import { microSlopeVarianceForWind, precipitationSlopeVariance } from "./simulation/OceanMath";
 import { beaufortToWindSpeed } from "../state/seaState";
 import { ATLANTIC_DEEP } from "./OceanOpticsProfile";
+import { EARTH_RADIUS_M } from "./OceanScreenSpaceMath";
 import {
   OceanPhysicalNodeMaterial,
   oceanFoamLighting,
@@ -46,7 +56,25 @@ type OceanRendererOptions = {
   boatInteraction: BoatWaterInteraction | null;
 };
 
+export type OceanScreenSpaceInputs = {
+  sceneColor: THREE.Texture;
+  sceneDepth: THREE.DepthTexture;
+  sceneVelocity: THREE.Texture | null;
+  sceneNormalRoughness: THREE.Texture | null;
+  ssrColor: THREE.Texture | null;
+  ssrConfidence: THREE.Texture | null;
+  oceanSurfaceDepth: THREE.Texture | null;
+  oceanSurfaceNormalRoughness: THREE.Texture | null;
+};
+
 type AnyUniform<T> = any & { value: T };
+type MutableTextureNode = any & { value: THREE.Texture };
+
+type OceanScreenTextureNodes = {
+  sceneColor: MutableTextureNode;
+  sceneDepth: MutableTextureNode;
+  ssrColor: MutableTextureNode;
+};
 
 type OceanUniformNodes = {
   worldOffset: AnyUniform<THREE.Vector2>;
@@ -73,6 +101,14 @@ type OceanUniformNodes = {
   iblGain: AnyUniform<number>;
   anisotropyEnabled: AnyUniform<number>;
   slopeMipOverride: AnyUniform<number>;
+  ssrEnabled: AnyUniform<number>;
+  refractionEnabled: AnyUniform<number>;
+  contactEnabled: AnyUniform<number>;
+  curvedHorizonEnabled: AnyUniform<number>;
+  fogColor: AnyUniform<THREE.Color>;
+  skyHorizonColor: AnyUniform<THREE.Color>;
+  skyHorizonRadianceScale: AnyUniform<number>;
+  fogDensity: AnyUniform<number>;
   boatInteractionOrigin: AnyUniform<THREE.Vector2>;
   boatInteractionSize: AnyUniform<number>;
   boatInteractionUvTexel: AnyUniform<number>;
@@ -107,12 +143,31 @@ type OceanUniformNodes = {
   debugFoamLighting: AnyUniform<number>;
   debugLuminanceHeatmap: AnyUniform<number>;
   debugClippingMask: AnyUniform<number>;
+  debugSceneCapture: AnyUniform<number>;
+  debugSceneDepth: AnyUniform<number>;
+  debugSceneVelocity: AnyUniform<number>;
+  debugOceanSurfaceDepth: AnyUniform<number>;
+  debugSsrRaw: AnyUniform<number>;
+  debugSsrConfidence: AnyUniform<number>;
+  debugSsrHistoryWeight: AnyUniform<number>;
+  debugReflectionFallback: AnyUniform<number>;
+  debugRefraction: AnyUniform<number>;
+  debugRefractionValidity: AnyUniform<number>;
+  debugContact: AnyUniform<number>;
+  debugHorizonBlend: AnyUniform<number>;
 };
 
-const MAX_RADIUS_METERS = 30000;
+const MAX_RADIUS_METERS = 80000;
 
 function u<T>(value: T): AnyUniform<T> {
   return uniform(value as never) as unknown as AnyUniform<T>;
+}
+
+function createPlaceholderTexture(): THREE.DataTexture {
+  const result = new THREE.DataTexture(new Float32Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat, THREE.FloatType);
+  result.name = "ocean-screen-space-placeholder";
+  result.needsUpdate = true;
+  return result;
 }
 
 /**
@@ -194,7 +249,12 @@ export class OceanRenderer {
   private readonly geometry: THREE.BufferGeometry;
   private readonly material: OceanPhysicalNodeMaterial;
   private readonly depthMaterial: THREE.NodeMaterial;
+  private readonly surfaceDataMaterial: THREE.NodeMaterial;
+  private readonly surfaceDataMesh: THREE.Mesh;
+  private readonly surfaceDataScene = new THREE.Scene();
   private readonly uniforms: OceanUniformNodes;
+  private readonly screenTextures: OceanScreenTextureNodes;
+  private readonly placeholderTexture: THREE.DataTexture;
   private readonly foamNodes: NodeRef[];
   private readonly boatInteraction: BoatWaterInteraction | null;
   private readonly boatDynamicsNode: NodeRef | null;
@@ -208,13 +268,16 @@ export class OceanRenderer {
     const quality = this.simulation.quality;
     this.geometry = buildRadialGrid(quality.meshRings, quality.meshSectors, quality.meshInnerRadius);
 
-    const shader = createWaterMaterial(this.simulation, options.boatInteraction);
+    this.placeholderTexture = createPlaceholderTexture();
+    const shader = createWaterMaterial(this.simulation, options.boatInteraction, this.placeholderTexture);
     this.material = shader.material;
     // Bind the same dynamic environment explicitly so the ocean can calibrate
     // nocturnal IBL without changing Scene.environmentIntensity for the boat.
     this.material.envMap = options.scene.environment;
     this.depthMaterial = shader.depthMaterial;
+    this.surfaceDataMaterial = shader.surfaceDataMaterial;
     this.uniforms = shader.uniforms;
+    this.screenTextures = shader.screenTextures;
     this.foamNodes = shader.foamNodes;
     this.boatDynamicsNode = shader.boatDynamicsNode;
     this.boatFoamNode = shader.boatFoamNode;
@@ -227,7 +290,35 @@ export class OceanRenderer {
     this.mesh.customDepthMaterial = this.depthMaterial;
     // Receives the sun light's custom cloud-shadow node (projected cloud map)
     this.mesh.receiveShadow = true;
+    this.mesh.userData.oceanCapture = "exclude";
     options.scene.add(this.mesh);
+
+    this.surfaceDataMesh = new THREE.Mesh(this.geometry, this.surfaceDataMaterial);
+    this.surfaceDataMesh.frustumCulled = false;
+    this.surfaceDataScene.add(this.surfaceDataMesh);
+  }
+
+  renderSurfaceData(renderer: THREE.WebGPURenderer, camera: THREE.Camera, target: THREE.RenderTarget): void {
+    const previousTarget = renderer.getRenderTarget();
+    const previousAutoClear = renderer.autoClear;
+    this.surfaceDataMesh.position.copy(this.mesh.position);
+    this.surfaceDataMesh.visible = this.mesh.visible;
+    try {
+      renderer.autoClear = true;
+      renderer.setRenderTarget(target);
+      renderer.render(this.surfaceDataScene, camera);
+    } finally {
+      renderer.setRenderTarget(previousTarget);
+      renderer.autoClear = previousAutoClear;
+    }
+  }
+
+  setScreenSpaceInputs(inputs: OceanScreenSpaceInputs): void {
+    this.screenTextures.sceneColor.value = inputs.sceneColor;
+    // Packed color attachment: RGB view normal, A hardware depth. Sampling a
+    // non-MSAA color texture avoids binding a multisampled depth attachment.
+    this.screenTextures.sceneDepth.value = inputs.sceneNormalRoughness ?? this.placeholderTexture;
+    this.screenTextures.ssrColor.value = inputs.ssrColor ?? this.placeholderTexture;
   }
 
   applySettings(settings: DebugSettings): void {
@@ -236,6 +327,10 @@ export class OceanRenderer {
     this.material.wireframe = settings.wireframe || settings.renderMode === "wireframe";
     this.uniforms.anisotropyEnabled.value = settings.oceanAnisotropyEnabled ? 1 : 0;
     this.uniforms.slopeMipOverride.value = settings.oceanSlopeMipOverride;
+    this.uniforms.ssrEnabled.value = settings.oceanSsrEnabled ? 1 : 0;
+    this.uniforms.refractionEnabled.value = settings.oceanRefractionEnabled ? 1 : 0;
+    this.uniforms.contactEnabled.value = settings.oceanContactEnabled ? 1 : 0;
+    this.uniforms.curvedHorizonEnabled.value = settings.oceanCurvedHorizonEnabled ? 1 : 0;
     this.setDebugMode(settings.renderMode);
   }
 
@@ -286,6 +381,12 @@ export class OceanRenderer {
     this.uniforms.sunGlitterGain.value = settings.oceanSunGlitterGain;
     this.uniforms.moonGlitterGain.value = settings.oceanMoonGlitterGain;
     this.uniforms.localOpticalPathM.value = settings.oceanLocalOpticalPathM;
+    this.uniforms.fogColor.value.set(environment.fogColor);
+    this.uniforms.skyHorizonColor.value.set(environment.skyHorizonColor);
+    // Match the HDR scale used by AtmosphereSystem's lower sky/cloud ambient.
+    // Environment colors are display-like anchors, not scene-linear radiance.
+    this.uniforms.skyHorizonRadianceScale.value = THREE.MathUtils.lerp(0.72, 3.4, daylight);
+    this.uniforms.fogDensity.value = environment.fogDensity;
     if (this.boatInteraction && this.boatDynamicsNode && this.boatFoamNode) {
       const interaction = this.boatInteraction.sampleState;
       this.boatDynamicsNode.value = interaction.dynamicsTexture;
@@ -309,6 +410,8 @@ export class OceanRenderer {
     this.geometry.dispose();
     this.material.dispose();
     this.depthMaterial.dispose();
+    this.surfaceDataMaterial.dispose();
+    this.placeholderTexture.dispose();
     this.mesh.removeFromParent();
   }
 
@@ -342,20 +445,40 @@ export class OceanRenderer {
     this.uniforms.debugFoamLighting.value = mode === "foamLighting" ? 1 : 0;
     this.uniforms.debugLuminanceHeatmap.value = mode === "luminanceHeatmap" ? 1 : 0;
     this.uniforms.debugClippingMask.value = mode === "clippingMask" ? 1 : 0;
+    this.uniforms.debugSceneCapture.value = mode === "sceneCapture" ? 1 : 0;
+    this.uniforms.debugSceneDepth.value = mode === "sceneDepth" ? 1 : 0;
+    this.uniforms.debugSceneVelocity.value = mode === "sceneVelocity" ? 1 : 0;
+    this.uniforms.debugOceanSurfaceDepth.value = mode === "oceanSurfaceDepth" ? 1 : 0;
+    this.uniforms.debugSsrRaw.value = mode === "ssrRaw" ? 1 : 0;
+    this.uniforms.debugSsrConfidence.value = mode === "ssrConfidence" ? 1 : 0;
+    this.uniforms.debugSsrHistoryWeight.value = mode === "ssrHistoryWeight" ? 1 : 0;
+    this.uniforms.debugReflectionFallback.value = mode === "reflectionFallback" ? 1 : 0;
+    this.uniforms.debugRefraction.value = mode === "refraction" ? 1 : 0;
+    this.uniforms.debugRefractionValidity.value = mode === "refractionValidity" ? 1 : 0;
+    this.uniforms.debugContact.value = mode === "contact" ? 1 : 0;
+    this.uniforms.debugHorizonBlend.value = mode === "horizonBlend" ? 1 : 0;
   }
 }
 
 function createWaterMaterial(
   simulation: OceanSimulation,
-  boatInteraction: BoatWaterInteraction | null
+  boatInteraction: BoatWaterInteraction | null,
+  placeholderTexture: THREE.Texture
 ): {
   material: OceanPhysicalNodeMaterial;
   depthMaterial: THREE.NodeMaterial;
+  surfaceDataMaterial: THREE.NodeMaterial;
   uniforms: OceanUniformNodes;
+  screenTextures: OceanScreenTextureNodes;
   foamNodes: NodeRef[];
   boatDynamicsNode: NodeRef | null;
   boatFoamNode: NodeRef | null;
 } {
+  const screenTextures: OceanScreenTextureNodes = {
+    sceneColor: texture(placeholderTexture) as MutableTextureNode,
+    sceneDepth: texture(placeholderTexture) as MutableTextureNode,
+    ssrColor: texture(placeholderTexture).setSampler(false) as MutableTextureNode
+  };
   const uniforms: OceanUniformNodes = {
     worldOffset: u(new THREE.Vector2()),
     displacementToggle: u(1),
@@ -381,6 +504,14 @@ function createWaterMaterial(
     iblGain: u(1),
     anisotropyEnabled: u(1),
     slopeMipOverride: u(-1),
+    ssrEnabled: u(1),
+    refractionEnabled: u(1),
+    contactEnabled: u(1),
+    curvedHorizonEnabled: u(1),
+    fogColor: u(new THREE.Color("#7f929d")),
+    skyHorizonColor: u(new THREE.Color("#9cc7df")),
+    skyHorizonRadianceScale: u(3.4),
+    fogDensity: u(0.00004),
     boatInteractionOrigin: u(new THREE.Vector2()),
     boatInteractionSize: u(1),
     boatInteractionUvTexel: u(1 / 128),
@@ -414,7 +545,19 @@ function createWaterMaterial(
     debugAmbientVolume: u(0),
     debugFoamLighting: u(0),
     debugLuminanceHeatmap: u(0),
-    debugClippingMask: u(0)
+    debugClippingMask: u(0),
+    debugSceneCapture: u(0),
+    debugSceneDepth: u(0),
+    debugSceneVelocity: u(0),
+    debugOceanSurfaceDepth: u(0),
+    debugSsrRaw: u(0),
+    debugSsrConfidence: u(0),
+    debugSsrHistoryWeight: u(0),
+    debugReflectionFallback: u(0),
+    debugRefraction: u(0),
+    debugRefractionValidity: u(0),
+    debugContact: u(0),
+    debugHorizonBlend: u(0)
   };
 
   const cascades = simulation.cascades;
@@ -422,8 +565,39 @@ function createWaterMaterial(
   const slopeMoment0Nodes = cascades.map((cascade) => texture(cascade.slopeMomentTexture0));
   const slopeMoment1Nodes = cascades.map((cascade) => texture(cascade.slopeMomentTexture1));
   const foamNodes = cascades.map((cascade) => texture(cascade.foamTextures[0]));
-  const boatDynamicsNode = boatInteraction ? texture(boatInteraction.currentDynamicsTexture) : null;
-  const boatFoamNode = boatInteraction ? texture(boatInteraction.currentFoamTexture) : null;
+  // Boat interaction fields are native StorageTexture instances. Reading them
+  // as storage bindings releases two fragment samplers without changing their
+  // compute ownership or wake/foam contents.
+  const boatDynamicsNode = boatInteraction
+    ? storageTexture(boatInteraction.currentDynamicsTexture).toReadOnly()
+    : null;
+  const boatFoamNode = boatInteraction
+    ? storageTexture(boatInteraction.currentFoamTexture).toReadOnly()
+    : null;
+  const loadScreenTexture = (node: MutableTextureNode, uvNode: NodeRef): NodeRef => {
+    const size = textureSize(textureLoad(node));
+    const texel = (ivec2 as any)(uvNode.mul(size)).clamp((ivec2 as any)(0), (ivec2 as any)(size).sub(1));
+    return textureLoad(node, texel);
+  };
+  const loadScreenTextureBilinear = (node: MutableTextureNode, uvNode: NodeRef): NodeRef => {
+    const size = textureSize(textureLoad(node));
+    const pixel = uvNode.mul(size).sub(0.5);
+    const base = pixel.floor();
+    const fraction = pixel.fract();
+    const maxTexel = (ivec2 as any)(size).sub(1);
+    const load = (offset: NodeRef): NodeRef => {
+      const texel = (ivec2 as any)(base.add(offset)).clamp((ivec2 as any)(0), maxTexel);
+      return textureLoad(node, texel);
+    };
+    const row0 = mix(load(vec2(0, 0)), load(vec2(1, 0)), fraction.x);
+    const row1 = mix(load(vec2(0, 1)), load(vec2(1, 1)), fraction.x);
+    return mix(row0, row1, fraction.y);
+  };
+  const loadBoatInteraction = (node: NodeRef, uvNode: NodeRef): NodeRef => {
+    const resolution = boatInteraction?.resolution ?? 1;
+    const texel = (ivec2 as any)(uvNode.mul(resolution)).clamp((ivec2 as any)(0), (ivec2 as any)(resolution - 1));
+    return node.load(texel).toReadOnly();
+  };
 
   const boatInteractionUvAndMask = (worldXZ: NodeRef, uvOffset: NodeRef = vec2(0, 0)): { uv: NodeRef; mask: NodeRef } => {
     const uv = worldXZ.sub(uniforms.boatInteractionOrigin).div(uniforms.boatInteractionSize).add(uvOffset);
@@ -439,20 +613,21 @@ function createWaterMaterial(
     if (!boatDynamicsNode) return vec4(0, 0, 0, 0);
 
     const sample = boatInteractionUvAndMask(worldXZ, uvOffset);
-    return (boatDynamicsNode as any).sample(sample.uv).level(float(0)).mul(sample.mask);
+    return loadBoatInteraction(boatDynamicsNode, sample.uv).mul(sample.mask);
   };
 
   const sampleBoatFoam = (worldXZ: NodeRef): NodeRef => {
     if (!boatFoamNode) return vec4(0, 0, 0, 0);
 
     const sample = boatInteractionUvAndMask(worldXZ);
-    return (boatFoamNode as any).sample(sample.uv).level(float(0)).mul(sample.mask);
+    return loadBoatInteraction(boatFoamNode, sample.uv).mul(sample.mask);
   };
 
   const material = new OceanPhysicalNodeMaterial();
   material.metalness = 0;
   material.ior = 1.333;
   material.envMapIntensity = 1;
+  material.fog = false;
 
   // Direct sun specular from scene lights is gated by sunDirectMask on the CPU;
   // SSS and IBL are masked here so no ghost column appears below the horizon.
@@ -485,7 +660,13 @@ function createWaterMaterial(
     vec3(0, boatInteractionVertex.r, 0).mul(uniforms.displacementToggle)
   );
 
-  const displacedPosition = positionGeometry.add(displacement);
+  const horizontalDistance = positionGeometry.xz.length();
+  const curvatureBlend = smoothstep(float(2000), float(5000), horizontalDistance)
+    .mul(uniforms.curvedHorizonEnabled);
+  const curvatureDrop = horizontalDistance.mul(horizontalDistance)
+    .div(2 * EARTH_RADIUS_M)
+    .mul(curvatureBlend);
+  const displacedPosition = positionGeometry.add(displacement).sub((vec3 as any)(0, curvatureDrop, 0));
   material.positionNode = displacedPosition;
 
   const depthMaterial = new THREE.NodeMaterial();
@@ -498,7 +679,11 @@ function createWaterMaterial(
 
   const vHeight: NodeRef = vertexStage(displacement.y);
   const vSampleXZ: NodeRef = vertexStage(sampleXZ);
-  const vDistance: NodeRef = vertexStage(cameraDistance);
+  // Fog integrates along the horizontal water path. Keeping camera altitude in
+  // the LOD distance is correct, but using it for the fragment varying caused
+  // the horizon path to collapse to zero on the camera-centred radial mesh.
+  const vDistance: NodeRef = vertexStage(horizontalDistance);
+  const vHorizonBlend: NodeRef = vertexStage(curvatureBlend);
   const vBoatInteraction: NodeRef = vertexStage(boatInteractionVertex);
   const vBoatInteractionMask: NodeRef = vertexStage(boatInteractionMask);
 
@@ -713,10 +898,71 @@ function createWaterMaterial(
     .mul(scatteringAlbedo)
     .mul(vec3(1, 1, 1).sub(transmittance))
     .mul(upwellingGain);
-  const ambientVolume = waterVolume
+
+  // Scene refraction is valid only where an opaque capture lies behind the
+  // water fragment. Open ocean therefore keeps the calibrated deep-water
+  // upwelling instead of refracting the sky or inventing a seabed.
+  const viewNormal = transformNormalToView(worldNormal).normalize();
+  const directSceneDepth = loadScreenTexture(screenTextures.sceneDepth, screenUV).a;
+  const directSceneView = getViewPosition(screenUV, directSceneDepth, cameraProjectionMatrixInverse);
+  const directThickness = positionView.z.sub(directSceneView.z).max(0);
+  const distortionScale = directThickness.div(positionView.z.abs().max(1)).mul(0.035).clamp(0, 0.025);
+  const refractedUv = screenUV.add(viewNormal.xy.mul(distortionScale));
+  const sceneSample = loadScreenTexture(screenTextures.sceneColor, refractedUv);
+  const refractedDepth = loadScreenTexture(screenTextures.sceneDepth, refractedUv).a;
+  const refractedView = getViewPosition(refractedUv, refractedDepth, cameraProjectionMatrixInverse);
+  const sceneThickness = positionView.z.sub(refractedView.z);
+  const uvValid = step(float(0.002), refractedUv.x)
+    .mul(step(refractedUv.x, float(0.998)))
+    .mul(step(float(0.002), refractedUv.y))
+    .mul(step(refractedUv.y, float(0.998)));
+  const thicknessValid = smoothstep(float(0.002), float(0.05), sceneThickness)
+    .mul(float(1).sub(smoothstep(float(6.8), float(8), sceneThickness)));
+  const refractionValidity = sceneSample.a
+    .mul(uvValid)
+    .mul(thicknessValid)
+    .mul(uniforms.refractionEnabled)
+    .mul(float(1).sub(foamBlend));
+  const sceneOpticalPath = sceneThickness.max(0).min(8).div(cosTransmitted.max(0.15));
+  const sceneTransmittance = exp(extinction.mul(sceneOpticalPath).negate());
+  const refractedVolume = sceneSample.rgb.mul(sceneTransmittance)
+    .add(ambientRadiance.mul(scatteringAlbedo).mul(vec3(1).sub(sceneTransmittance)).mul(upwellingGain));
+  const contactAmount = float(1).sub(smoothstep(float(0), float(0.35), sceneThickness.max(0)))
+    .mul(float(1).sub(smoothstep(float(20), float(45), vDistance)))
+    .mul(0.25)
+    .mul(sceneSample.a)
+    .mul(uniforms.contactEnabled);
+  const resolvedWaterVolume = mix(waterVolume, refractedVolume, refractionValidity)
+    .mul(float(1).sub(contactAmount));
+  const ambientVolume = resolvedWaterVolume
     .mul(float(1).sub(fresnel))
     .mul(float(1).sub(foamBlend));
   material.emissiveNode = ambientVolume;
+
+  const surfaceDataMaterial = new THREE.NodeMaterial();
+  surfaceDataMaterial.name = "FFT ocean surface data";
+  surfaceDataMaterial.positionNode = displacedPosition;
+  surfaceDataMaterial.depthTest = true;
+  surfaceDataMaterial.depthWrite = true;
+  // Pack normal XY + roughness + hardware depth into a sampleable color
+  // attachment; the target depth texture remains render-only.
+  surfaceDataMaterial.fragmentNode = (vec4 as any)(
+    viewNormal.x.mul(0.5).add(0.5),
+    viewNormal.y.mul(0.5).add(0.5),
+    waterRoughness,
+    depth
+  );
+
+  // The SSR target is unfilterable Float32 so it does not allocate a seventeenth
+  // sampler. Four explicit loads restore bilinear reconstruction at half/quarter
+  // resolution and remove the block grid visible with nearest reads.
+  const ssrSample = loadScreenTextureBilinear(screenTextures.ssrColor, screenUV);
+  const ssrConfidenceSample = ssrSample.a
+    .mul(uniforms.ssrEnabled)
+    .mul(float(1).sub(foamBlend))
+    // Retain some environment response even for nominally perfect hits. This
+    // prevents very dark hull texels from becoming black punched-out patches.
+    .mul(0.72);
   material.setOceanLightingContext({
     foamBlend,
     foamColor,
@@ -729,6 +975,8 @@ function createWaterMaterial(
     sunGlitterGain: uniforms.sunGlitterGain,
     moonGlitterGain: uniforms.moonGlitterGain,
     iblGain: uniforms.iblGain,
+    ssrRadiance: ssrSample.rgb,
+    ssrConfidence: ssrConfidenceSample,
     celestialAngularRadiusRad: THREE.MathUtils.degToRad(ATLANTIC_DEEP.celestialAngularRadiusDeg),
     f0: f0Value
   });
@@ -795,6 +1043,23 @@ function createWaterMaterial(
     result = result.add(heat.mul(uniforms.debugLuminanceHeatmap));
     const clipped = step(float(1), output.r.max(output.g).max(output.b));
     result = result.add(vec3(clipped, 0, 0).mul(uniforms.debugClippingMask));
+    const captureDebug = loadScreenTexture(screenTextures.sceneColor, screenUV);
+    const sceneDepthDebug = loadScreenTexture(screenTextures.sceneDepth, screenUV).a;
+    const sceneVelocityDebug = vec2(0);
+    const surfaceDepthDebug = float(0);
+    result = result.add(captureDebug.rgb.mul(uniforms.debugSceneCapture));
+    result = result.add(vec3(sceneDepthDebug).mul(uniforms.debugSceneDepth));
+    result = result.add(vec3(sceneVelocityDebug.mul(8).add(0.5), 0).mul(uniforms.debugSceneVelocity));
+    result = result.add(vec3(surfaceDepthDebug).mul(uniforms.debugOceanSurfaceDepth));
+    result = result.add(ssrSample.rgb.mul(uniforms.debugSsrRaw));
+    result = result.add(vec3(ssrConfidenceSample).mul(uniforms.debugSsrConfidence));
+    result = result.add(vec3(ssrSample.a)
+      .mul(uniforms.debugSsrHistoryWeight));
+    result = result.add(vec3(float(1).sub(ssrConfidenceSample), 0, ssrConfidenceSample)
+      .mul(uniforms.debugReflectionFallback));
+    result = result.add(refractedVolume.mul(uniforms.debugRefraction));
+    result = result.add(vec3(refractionValidity).mul(uniforms.debugRefractionValidity));
+    result = result.add((vec3 as any)(contactAmount, contactAmount.mul(0.45), 0).mul(uniforms.debugContact));
     return result;
   })();
 
@@ -827,13 +1092,72 @@ function createWaterMaterial(
     .add(uniforms.debugFoamLighting)
     .add(uniforms.debugLuminanceHeatmap)
     .add(uniforms.debugClippingMask)
+    .add(uniforms.debugSceneCapture)
+    .add(uniforms.debugSceneDepth)
+    .add(uniforms.debugSceneVelocity)
+    .add(uniforms.debugOceanSurfaceDepth)
+    .add(uniforms.debugSsrRaw)
+    .add(uniforms.debugSsrConfidence)
+    .add(uniforms.debugSsrHistoryWeight)
+    .add(uniforms.debugReflectionFallback)
+    .add(uniforms.debugRefraction)
+    .add(uniforms.debugRefractionValidity)
+    .add(uniforms.debugContact)
+    .add(uniforms.debugHorizonBlend)
     .clamp(0, 1);
-  material.outputNode = mix(output, vec4(debugColor, 1), debugBlend);
+  const fogOpticalDepth = uniforms.fogDensity.mul(vDistance);
+  const physicalFog = float(1).sub(exp(fogOpticalDepth.mul(fogOpticalDepth).negate()));
+  // Converge only at grazing angles. A distance-only blend washed out large
+  // top-down areas and produced an independent grey strip at deck height.
+  const geometricHorizonDistance = sqrt(
+    cameraPosition.y.max(1).mul(2 * EARTH_RADIUS_M)
+  );
+  const distanceToHorizon = smoothstep(
+    geometricHorizonDistance.mul(0.2),
+    geometricHorizonDistance.mul(0.65),
+    vDistance
+  );
+  // Vertex distance is deliberately coarse on the radial far rings. The
+  // per-fragment view elevation closes the remaining sub-ring at the tangent
+  // without affecting top-down water.
+  const grazingHorizon = float(1).sub(
+    smoothstep(float(0.01), float(0.1), viewDir.y.abs())
+  );
+  // Distance to the geometric tangent is the authoritative convergence term.
+  // vHorizonBlend only describes where render curvature is fully active; using
+  // it as a multiplier left the pre-tangent fog texels stranded at fogColor.
+  const horizonConvergence = distanceToHorizon
+    .max(grazingHorizon)
+    .max(vHorizonBlend.mul(smoothstep(float(0.05), float(0.4), fresnel)))
+    .clamp(0, 1);
+  const horizonBlend = physicalFog.max(horizonConvergence).clamp(0, 1);
+  const outputLuma = output.rgb.dot(vec3(0.2126, 0.7152, 0.0722));
+  const desaturated = (mix as any)(output.rgb, (vec3 as any)(outputLuma), physicalFog.mul(0.22));
+  const grazingFogTarget = (mix as any)(
+    uniforms.fogColor,
+    uniforms.skyHorizonColor.mul(uniforms.skyHorizonRadianceScale),
+    distanceToHorizon.max(smoothstep(float(0.08), float(0.62), fresnel))
+  );
+  const fogIntegrated = (mix as any)(desaturated, grazingFogTarget, physicalFog);
+  // The procedural sky is HDR while EnvironmentState colors are display-like.
+  // Use the same day/night radiance scale as the atmosphere so the tangent
+  // water texel converges continuously instead of forming a grey strip.
+  const horizonIntegrated = (mix as any)(
+    fogIntegrated,
+    uniforms.skyHorizonColor.mul(uniforms.skyHorizonRadianceScale),
+    horizonConvergence
+  );
+  const finalOutput = vec4(horizonIntegrated, output.a);
+  const horizonDebug = vec4(vec3(horizonBlend), 1);
+  const withDebug = mix(finalOutput, vec4(debugColor, 1), debugBlend);
+  material.outputNode = mix(withDebug, horizonDebug, uniforms.debugHorizonBlend);
 
   return {
     material,
     depthMaterial,
+    surfaceDataMaterial,
     uniforms,
+    screenTextures,
     foamNodes,
     boatDynamicsNode,
     boatFoamNode

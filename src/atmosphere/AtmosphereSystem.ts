@@ -532,7 +532,14 @@ export class AtmosphereSystem {
       skyZenithColor: `#${zenith.getHexString()}`,
       skyHorizonColor: `#${horizon.getHexString()}`,
       fogColor: `#${fogColor.getHexString()}`,
-      fogDensity: THREE.MathUtils.lerp(0.00004, 0.0028, 1 - weather.visibilityKm / 40),
+      // Visibility can exceed the 40 km reference in clear presets. Clamp the
+      // interpolation factor so fog density never becomes negative and silently
+      // disables horizon integration in consumers such as the ocean.
+      fogDensity: THREE.MathUtils.lerp(
+        0.00004,
+        0.0028,
+        THREE.MathUtils.clamp(1 - weather.visibilityKm / 40, 0, 1)
+      ),
       ambientColor: `#${zenith.clone().lerp(horizon, 0.28).getHexString()}`,
       ambientIntensity,
       sunColor: `#${new THREE.Color("#fff5d0").lerp(new THREE.Color("#ff9f58"), twilightGlow * 0.45).getHexString()}`,

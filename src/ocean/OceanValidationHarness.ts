@@ -3,7 +3,7 @@ import type { DebugRenderMode, DebugSettings, LightningOverride, QualityTier, We
 import type { BoatSystemsState } from "../gameplay/types";
 
 type CameraPreset = "rail" | "railForward" | "bow" | "bridge" | "sunColumn" |
-  "aerial50" | "aerial150" | "aerial300";
+  "boatReflection" | "aerial50" | "aerial150" | "aerial300";
 type SeaPreset = "low" | "medium" | "high";
 export type ValidationCameraMotion = "static" | "pan-slow";
 export type ValidationLightName = "work" | "flashlight" | "cabin" | "navigation" | "anchor";
@@ -26,10 +26,16 @@ export type OceanValidationScenario = {
   anisotropyEnabled: boolean;
   slopeMipOverride: number;
   surfacePrecipitation: boolean;
+  ssr: boolean;
+  ssrTemporal: boolean;
+  refraction: boolean;
+  contact: boolean;
+  curvedHorizon: boolean;
 };
 
 type DefaultedScenarioField = "lights" | "lightning" | "cameraMotion" | "debugView" | "quality" |
-  "anisotropyEnabled" | "slopeMipOverride" | "surfacePrecipitation";
+  "anisotropyEnabled" | "slopeMipOverride" | "surfacePrecipitation" | "ssr" | "ssrTemporal" |
+  "refraction" | "contact" | "curvedHorizon";
 type ScenarioInput = Omit<OceanValidationScenario, DefaultedScenarioField> &
   Partial<Pick<OceanValidationScenario, DefaultedScenarioField>>;
 
@@ -52,7 +58,12 @@ function scenario(input: ScenarioInput): OceanValidationScenario {
     quality: input.quality ?? "high",
     anisotropyEnabled: input.anisotropyEnabled ?? true,
     slopeMipOverride: input.slopeMipOverride ?? -1,
-    surfacePrecipitation: input.surfacePrecipitation ?? true
+    surfacePrecipitation: input.surfacePrecipitation ?? true,
+    ssr: input.ssr ?? true,
+    ssrTemporal: input.ssrTemporal ?? true,
+    refraction: input.refraction ?? true,
+    contact: input.contact ?? true,
+    curvedHorizon: input.curvedHorizon ?? true
   };
 }
 
@@ -64,6 +75,9 @@ const CAMERA_STATES: Record<CameraPreset, { position: [number, number, number]; 
   // At 09:00 the view vector mirrors the clear-sky sun around the mean sea
   // normal, placing the most demanding specular column in the camera center.
   sunColumn: { position: [-4, 18, -18], target: [0, 0, 0] },
+  // Outside the hull, looking back across foreground water. Both the source
+  // geometry and its physically plausible screen-space reflection stay visible.
+  boatReflection: { position: [13, 3.4, 10], target: [0, 0.7, 0] },
   aerial50: { position: [32, 50, 28], target: [0, 0, -10] },
   aerial150: { position: [72, 150, 66], target: [0, 0, -18] },
   // A tiny horizontal offset avoids the undefined up vector of an exact 90-degree look-down.
@@ -77,6 +91,7 @@ const CAMERA_WEATHER: Record<CameraPreset, { weather: WeatherPresetName; hour: n
   bow: { weather: "clear", hour: 18.4 },
   bridge: { weather: "cloudy", hour: 15.2 },
   sunColumn: { weather: "clear", hour: 9 },
+  boatReflection: { weather: "clear", hour: 14.5 },
   aerial50: { weather: "clear", hour: 13.5 },
   aerial150: { weather: "clear", hour: 16 },
   aerial300: { weather: "storm", hour: 15 }
@@ -120,7 +135,16 @@ export const OCEAN_VALIDATION_SCENARIOS: readonly OceanValidationScenario[] = [
   scenario({ id: "pr6b-cloudy-deck", camera: "bridge", sea: "medium", weather: "cloudy", worldTimeHours: 15.2, simulationTimeSeconds: 120, foam: true, seed: 1337 }),
   scenario({ id: "pr6b-horizon-pan", camera: "bridge", sea: "medium", weather: "clear", worldTimeHours: 16, simulationTimeSeconds: 120, foam: false, seed: 1337, cameraMotion: "pan-slow" }),
   scenario({ id: "storm-surface-off", camera: "bridge", sea: "high", weather: "storm", worldTimeHours: 15.2, simulationTimeSeconds: 120, foam: false, seed: 1337, surfacePrecipitation: false }),
-  scenario({ id: "storm-surface-on", camera: "bridge", sea: "high", weather: "storm", worldTimeHours: 15.2, simulationTimeSeconds: 120, foam: false, seed: 1337, surfacePrecipitation: true })
+  scenario({ id: "storm-surface-on", camera: "bridge", sea: "high", weather: "storm", worldTimeHours: 15.2, simulationTimeSeconds: 120, foam: false, seed: 1337, surfacePrecipitation: true }),
+  scenario({ id: "pr6c-rail-reflection-off", camera: "boatReflection", sea: "medium", weather: "clear", worldTimeHours: 14.5, simulationTimeSeconds: 120, foam: false, seed: 1337, ssr: false }),
+  scenario({ id: "pr6c-rail-reflection-on", camera: "boatReflection", sea: "medium", weather: "clear", worldTimeHours: 14.5, simulationTimeSeconds: 120, foam: false, seed: 1337, ssr: true }),
+  scenario({ id: "pr6c-waterline-off", camera: "railForward", sea: "medium", weather: "cloudy", worldTimeHours: 15.2, simulationTimeSeconds: 120, foam: false, seed: 1337, refraction: false, contact: false }),
+  scenario({ id: "pr6c-waterline-on", camera: "railForward", sea: "medium", weather: "cloudy", worldTimeHours: 15.2, simulationTimeSeconds: 120, foam: false, seed: 1337, refraction: true, contact: true }),
+  scenario({ id: "pr6c-night-reflection", camera: "railForward", sea: "medium", weather: "clear", worldTimeHours: 1, simulationTimeSeconds: 120, foam: true, seed: 1337, lights: { ...LIGHTS_OFF, work: true } }),
+  scenario({ id: "pr6c-horizon-deck", camera: "bridge", sea: "low", weather: "clear", worldTimeHours: 13.5, simulationTimeSeconds: 120, foam: false, seed: 1337 }),
+  scenario({ id: "pr6c-horizon-50", camera: "aerial50", sea: "low", weather: "clear", worldTimeHours: 13.5, simulationTimeSeconds: 120, foam: false, seed: 1337 }),
+  scenario({ id: "pr6c-horizon-150", camera: "aerial150", sea: "low", weather: "clear", worldTimeHours: 13.5, simulationTimeSeconds: 120, foam: false, seed: 1337 }),
+  scenario({ id: "pr6c-horizon-300", camera: "aerial300", sea: "low", weather: "clear", worldTimeHours: 13.5, simulationTimeSeconds: 120, foam: false, seed: 1337 })
 ];
 
 export function readOceanValidationScenario(search: string): OceanValidationScenario | null {
@@ -140,7 +164,12 @@ export function readOceanValidationScenario(search: string): OceanValidationScen
     quality: parseQuality(params.get("quality"), base.quality),
     anisotropyEnabled: parseBoolean(params.get("anisotropy"), base.anisotropyEnabled),
     slopeMipOverride: parseSlopeMipOverride(params.get("slopeMip"), base.slopeMipOverride),
-    surfacePrecipitation: parseBoolean(params.get("surfacePrecipitation"), base.surfacePrecipitation)
+    surfacePrecipitation: parseBoolean(params.get("surfacePrecipitation"), base.surfacePrecipitation),
+    ssr: parseBoolean(params.get("ssr"), base.ssr),
+    ssrTemporal: parseBoolean(params.get("ssrTemporal"), base.ssrTemporal),
+    refraction: parseBoolean(params.get("refraction"), base.refraction),
+    contact: parseBoolean(params.get("contact"), base.contact),
+    curvedHorizon: parseBoolean(params.get("curvedHorizon"), base.curvedHorizon)
   };
 }
 
@@ -163,6 +192,11 @@ export function applyOceanValidationSettings(
     oceanAnisotropyEnabled: current.anisotropyEnabled,
     oceanSlopeMipOverride: current.slopeMipOverride,
     oceanSurfacePrecipitationEnabled: current.surfacePrecipitation,
+    oceanSsrEnabled: current.ssr,
+    oceanSsrTemporalEnabled: current.ssrTemporal,
+    oceanRefractionEnabled: current.refraction,
+    oceanContactEnabled: current.contact,
+    oceanCurvedHorizonEnabled: current.curvedHorizon,
     boatLightsOn: current.lights.work,
     lightningOverride: current.lightning,
     boatWaterInteraction: false,
@@ -246,7 +280,9 @@ function parseOceanDebugView(raw: string | null, fallback: DebugRenderMode): Deb
     "filteredSlope", "slopeMip", "slopeVariance", "anisotropy", "roughness", "jacobianTerms",
     "geometryLodWeight", "normalLodWeight", "unresolvedEnergy", "cascades", "fresnel", "opticalDepth",
     "waterVolume", "localSpecular", "localVolume", "localLightRoles", "sunGlitter", "moonGlitter",
-    "ambientVolume", "foamLighting", "luminanceHeatmap", "clippingMask"
+    "ambientVolume", "foamLighting", "luminanceHeatmap", "clippingMask", "sceneCapture", "sceneDepth",
+    "sceneVelocity", "oceanSurfaceDepth", "ssrRaw", "ssrConfidence", "ssrHistoryWeight",
+    "reflectionFallback", "refraction", "refractionValidity", "contact", "horizonBlend"
   ];
   return raw !== null && values.includes(raw as DebugRenderMode) ? raw as DebugRenderMode : fallback;
 }

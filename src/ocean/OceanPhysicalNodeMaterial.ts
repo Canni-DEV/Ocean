@@ -8,6 +8,7 @@ import {
   positionViewDirection,
   property,
   roughness,
+  mix,
   vec3
 } from "three/tsl";
 import { getOceanLightRole, isOceanCelestialRole } from "./OceanLightRoles";
@@ -26,6 +27,8 @@ export type OceanLightingContext = {
   sunGlitterGain: NodeRef;
   moonGlitterGain: NodeRef;
   iblGain: NodeRef;
+  ssrRadiance: NodeRef;
+  ssrConfidence: NodeRef;
   celestialAngularRadiusRad: number;
   f0: number;
 };
@@ -171,7 +174,11 @@ class OceanLightingModel extends PhysicalLightingModel {
     const context = builder.context;
     const radiance = context.radiance;
     const iblIrradiance = context.iblIrradiance;
-    context.radiance = radiance.mul(this.ocean.iblGain);
+    // SSR contains incident scene radiance, not a pre-Fresnel color. Replacing
+    // the environment radiance here lets Three's physical IBL integration
+    // apply the BRDF/Fresnel exactly once and prevents additive double energy.
+    context.radiance = mix(radiance, this.ocean.ssrRadiance, this.ocean.ssrConfidence)
+      .mul(this.ocean.iblGain);
     context.iblIrradiance = iblIrradiance.mul(this.ocean.iblGain);
     super.indirectSpecular(builder);
     context.radiance = radiance;

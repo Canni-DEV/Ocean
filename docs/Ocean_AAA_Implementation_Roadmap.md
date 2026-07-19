@@ -78,7 +78,7 @@ con el barco todavía no forman un sistema óptico completo.
 | 4 | PR4 — Slope moments | Parcial | Roughness filtrada | PR6B |
 | 5 | PR6A — Óptica Atlántico base | Parcial | Fresnel y volumen base | PR6B |
 | 6 | **PR6B — Luces locales, noche y glitter** | **Reabierta: PR6B.6 estabilización implementada; pendiente inspección visual** | Interacción luminosa convincente | PR6C |
-| 7 | PR6C — SSR, refracción, contacto y horizonte | Pendiente | Integración con escena | PR7/PR8 |
+| 7 | PR6C — SSR, refracción, contacto y horizonte | Implementación candidata; pendiente gate final de hardware y aprobación visual | Integración con escena | PR7/PR8 |
 | 8 | PR4B — Microescala y LOD definitivo | Pendiente | Detalle cercano estable | PR5/PR7 |
 | 9 | PR5 — `PhysicalSeaState` | Pendiente | Mar físicamente controlable | PR7 |
 | 10 | PR7 — Espuma y spray profesionales | Pendiente | Rompientes legibles | PR8 |
@@ -532,18 +532,21 @@ Pendientes para declarar la PR cerrada:
 
 ## 8. PR6C — SSR, refracción, contacto y horizonte
 
-- [ ] Capturar scene color y depth compatibles con WebGPU.
-- [ ] SSR de agua a media resolución con confidence y rechazo de disoclusiones.
-- [ ] Fallback continuo a environment map.
-- [ ] Reflejo cercano y estable del barco.
-- [ ] Refracción de escena con espesor/profundidad aproximados.
-- [ ] Oscurecimiento de waterline y oclusión de contacto.
-- [ ] Integración de niebla y atmósfera en horizonte.
-- [ ] Menos contraste y saturación con distancia.
-- [ ] Debug de SSR confidence, fallback, refraction y contact.
-- [ ] Presupuesto separado de SSR/refraction.
-- [ ] Aceptación: el barco tiene escala/contacto y el horizonte no forma una línea
-  gráfica independiente del cielo.
+- [x] Capturar scene color, depth, normal/roughness y velocity compatibles con WebGPU.
+- [x] Capturar depth, normal/roughness y velocity exactos de la superficie oceánica.
+- [x] SSR escalado por tier con ray march, refinamiento, confidence y rechazo de hits inválidos.
+- [x] Acumulación temporal reproyectada con velocity, clamp de vecindad y resets explícitos.
+- [x] Fallback continuo a environment map mediante reemplazo, sin suma doble ni Fresnel duplicado.
+- [x] Reflejo cercano del barco cuando la fuente permanece visible en pantalla.
+- [x] Refracción de escena con Snell, Beer–Lambert, espesor y validez bilateral.
+- [x] Oscurecimiento de waterline y oclusión de contacto sin espuma añadida.
+- [x] Curvatura terrestre render-only y radio oceánico de 80 km.
+- [x] Integración explícita de niebla/atmósfera y transferencia de microdetalle lejano.
+- [x] Debug real de captura, depth, velocity, SSR, fallback, refracción, contacto y horizonte.
+- [x] Gates reproducibles por URL y matriz visual automatizada de High/Medium/Low.
+- [ ] Confirmar visualmente que la convergencia agua/cielo no deja una línea gráfica.
+- [ ] Medir GPU p95 a `2560×1440`; los tiempos de cada pass publicados hoy son CPU de envío.
+- [ ] Ejecutar soak de 30 minutos y aprobar capturas candidatas.
 
 ## 9. PR4B — Microescala y LOD definitivo
 

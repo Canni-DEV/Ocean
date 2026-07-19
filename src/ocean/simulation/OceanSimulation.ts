@@ -26,6 +26,19 @@ export type OceanQualityConfig = {
   meshInnerRadius: number;
   envMapSize: number;
   envMapIntervalMs: number;
+  screenSpace: OceanScreenSpaceQuality;
+};
+
+export type OceanScreenSpaceQuality = {
+  captureScale: number;
+  ssrEnabled: boolean;
+  temporalEnabled: boolean;
+  maxSteps: number;
+  binarySteps: number;
+  maxDistanceM: number;
+  maxHistoryWeight: number;
+  refractionEnabled: boolean;
+  contactEnabled: boolean;
 };
 
 export const OCEAN_QUALITY: Record<QualityTier, OceanQualityConfig> = {
@@ -39,7 +52,9 @@ export const OCEAN_QUALITY: Record<QualityTier, OceanQualityConfig> = {
     meshSectors: 112,
     meshInnerRadius: 1.6,
     envMapSize: 64,
-    envMapIntervalMs: 500
+    envMapIntervalMs: 500,
+    screenSpace: { captureScale: 0.25, ssrEnabled: false, temporalEnabled: false, maxSteps: 0,
+      binarySteps: 0, maxDistanceM: 0, maxHistoryWeight: 0, refractionEnabled: true, contactEnabled: true }
   },
   medium: {
     cascades: [
@@ -52,7 +67,9 @@ export const OCEAN_QUALITY: Record<QualityTier, OceanQualityConfig> = {
     meshSectors: 168,
     meshInnerRadius: 1.1,
     envMapSize: 128,
-    envMapIntervalMs: 250
+    envMapIntervalMs: 250,
+    screenSpace: { captureScale: 0.25, ssrEnabled: true, temporalEnabled: true, maxSteps: 24,
+      binarySteps: 3, maxDistanceM: 70, maxHistoryWeight: 0.82, refractionEnabled: true, contactEnabled: true }
   },
   high: {
     cascades: [
@@ -65,7 +82,9 @@ export const OCEAN_QUALITY: Record<QualityTier, OceanQualityConfig> = {
     meshSectors: 224,
     meshInnerRadius: 0.8,
     envMapSize: 256,
-    envMapIntervalMs: 100
+    envMapIntervalMs: 100,
+    screenSpace: { captureScale: 0.5, ssrEnabled: true, temporalEnabled: true, maxSteps: 48,
+      binarySteps: 5, maxDistanceM: 120, maxHistoryWeight: 0.88, refractionEnabled: true, contactEnabled: true }
   }
 };
 

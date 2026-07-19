@@ -1,0 +1,272 @@
+{
+  "browser": {
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.7827.55 Safari/537.36 Edg/149.0.7827.55",
+    "resolution": [
+      1280,
+      720
+    ],
+    "devicePixelRatio": 1,
+    "webgpu": true
+  },
+  "imageMetrics": {
+    "clippedFraction": 0,
+    "nonFinite": 0,
+    "median": 0.033453333333333335
+  },
+  "validation": {
+    "scenario": {
+      "id": "pr6c-night-reflection",
+      "camera": "railForward",
+      "sea": "medium",
+      "weather": "clear",
+      "worldTimeHours": 1,
+      "simulationTimeSeconds": 120,
+      "foam": true,
+      "seed": 1337,
+      "lights": {
+        "work": true,
+        "flashlight": false,
+        "cabin": false,
+        "navigation": false,
+        "anchor": false
+      },
+      "lightning": "off",
+      "cameraMotion": "static",
+      "debugView": "final",
+      "quality": "high",
+      "anisotropyEnabled": true,
+      "slopeMipOverride": -1,
+      "surfacePrecipitation": true,
+      "ssr": true,
+      "ssrTemporal": true,
+      "refraction": true,
+      "contact": true,
+      "curvedHorizon": true
+    },
+    "settings": {
+      "quality": "high",
+      "renderMode": "final",
+      "atmosphereDebugMode": "off",
+      "weatherPreset": "clear",
+      "worldTimeHours": 1,
+      "timeScale": 0,
+      "beaufort": 5,
+      "seaStateControlMode": "manual-overrides",
+      "oceanSeed": 1337,
+      "showSky": true,
+      "showOcean": true,
+      "oceanDisplacement": true,
+      "showFoam": true,
+      "showRain": true,
+      "showClouds": true,
+      "boatWaterInteraction": false,
+      "weatherTransitionSeconds": 45,
+      "wireframe": false,
+      "paused": false,
+      "fetchKm": 300,
+      "swellAmount": 0.35,
+      "swellDirectionDeg": 25,
+      "choppiness": 0.7,
+      "foamIntensity": 1,
+      "foamDecay": 0.28,
+      "boatWakeIntensity": 1,
+      "boatWakeFoamIntensity": 1,
+      "waterTurbidity": 0.22,
+      "oceanLocalScatterGain": 1,
+      "oceanPhaseG": 0.55,
+      "oceanNightUpwellingGain": 1.1,
+      "oceanSunGlitterGain": 1,
+      "oceanMoonGlitterGain": 1,
+      "oceanLocalOpticalPathM": 6,
+      "oceanSurfacePrecipitationEnabled": true,
+      "oceanSsrEnabled": true,
+      "oceanSsrTemporalEnabled": true,
+      "oceanRefractionEnabled": true,
+      "oceanContactEnabled": true,
+      "oceanCurvedHorizonEnabled": true,
+      "oceanAnisotropyEnabled": true,
+      "oceanSlopeMipOverride": -1,
+      "lightningOverride": "off",
+      "cloudCoverageBias": 0,
+      "cloudDensityBias": 0,
+      "exposureBias": 0,
+      "boatLightsOn": true,
+      "firstPerson": false,
+      "flashlightCapacitySeconds": 1800,
+      "flashlightRechargeSeconds": 600,
+      "flashlightIntensityCd": 1400,
+      "flashlightRangeM": 45,
+      "flashlightHalfAngleDeg": 18,
+      "flashlightPenumbra": 0.85,
+      "flashlightLowThreshold": 0.15,
+      "flashlightCriticalThreshold": 0.05,
+      "fishingRopeEnabled": true,
+      "fishingRopeRadius": 0.008,
+      "fishingRopeRenderMode": "tube",
+      "fishingRopeMinLengthM": 0.2,
+      "fishingRopeMaxLengthM": 50,
+      "fishingRopeInitialLengthM": 0.5,
+      "fishingReelSpeedMs": 0.5,
+      "fishingBoomMinDeg": -12,
+      "fishingBoomMaxDeg": 60,
+      "fishingBoomDefaultDeg": -10
+    },
+    "spectrum": [
+      {
+        "energy": 26.150344296024883,
+        "heightVariance": 0.14332981250885626,
+        "slopeVariance": 0.011458329241592236,
+        "correlation": 0
+      },
+      {
+        "energy": 15.851677077033155,
+        "heightVariance": 0.005430181620370355,
+        "slopeVariance": 0.02778299710687274,
+        "correlation": 0
+      },
+      {
+        "energy": 8.491969862696331,
+        "heightVariance": 0.0007272564670138867,
+        "slopeVariance": 0.059534993800441575,
+        "correlation": 0
+      }
+    ],
+    "metrics": {
+      "backend": "webgpu",
+      "fps": 0,
+      "frameMs": 21.082311680219348,
+      "cpuMs": 9.35111761977387,
+      "gpuMs": 11.247968000000004,
+      "gpuComputeMs": 2.385312,
+      "gpuRenderMs": 8.862656000000003,
+      "oceanComputeMs": 0.6000000014901161,
+      "slopeMomentComputeMs": 0,
+      "boatInteractionComputeMs": 0.10000000149011612,
+      "cloudComputeMs": 1.2999999970197678,
+      "depthPrepassMs": 0.30000000447034836,
+      "oceanSceneCaptureMs": 1.8000000044703484,
+      "oceanSurfaceDataMs": 0.10000000149011612,
+      "oceanSsrMs": 0.09999999403953552,
+      "oceanPr6cGpuMs": null,
+      "oceanSpectrum": [
+        {
+          "energy": 26.150344296024883,
+          "heightVariance": 0.14332981250885626,
+          "slopeVariance": 0.011458329241592236,
+          "correlation": 0
+        },
+        {
+          "energy": 15.851677077033155,
+          "heightVariance": 0.005430181620370355,
+          "slopeVariance": 0.02778299710687274,
+          "correlation": 0
+        },
+        {
+          "energy": 8.491969862696331,
+          "heightVariance": 0.0007272564670138867,
+          "slopeVariance": 0.059534993800441575,
+          "correlation": 0
+        }
+      ],
+      "seaState": {
+        "source": "manual-overrides",
+        "windSpeedMs": 9.346764145949122,
+        "windDirectionDeg": 21.600000000000023,
+        "swellDirectionDeg": 25,
+        "swellStrength": 0.35,
+        "weatherTransitionProgress": 1,
+        "precipitation": 0
+      },
+      "seaLevelAtCameraM": -0.6620239071950483,
+      "worldTimeHours": 1,
+      "camera": {
+        "x": 3.4,
+        "y": 2.2,
+        "z": 0.5,
+        "yawDeg": 0,
+        "pitchDeg": -11.459155902616466
+      },
+      "boat": {
+        "position": {
+          "x": 0,
+          "y": 0.3375,
+          "z": 0
+        },
+        "speedMs": 0,
+        "headingDeg": 0,
+        "pitchDeg": 0,
+        "rollDeg": 0,
+        "throttle": 0,
+        "rudder": 0,
+        "capsized": false,
+        "waterHeightM": 0
+      },
+      "firstPerson": null,
+      "fishing": null,
+      "systems": {
+        "engine": "off",
+        "engineStartRemainingS": 0,
+        "fuel": 1,
+        "cabinLight": false,
+        "workLight": true,
+        "navigationLights": false,
+        "anchorLight": false,
+        "instrumentLights": false,
+        "horn": false,
+        "wipers": false,
+        "bilgePump": false,
+        "bilgeLevel": 0,
+        "radio": {
+          "powered": false,
+          "volume": 0.5,
+          "station": 1
+        },
+        "instruments": {
+          "rpm": 0,
+          "speedKnots": 0,
+          "fuel": 1,
+          "engineTemperatureC": 20,
+          "voltage": 12.4
+        },
+        "navigation": {
+          "headingDeg": 0,
+          "worldX": 0,
+          "worldZ": 0
+        }
+      },
+      "flashlight": {
+        "powered": false,
+        "charge01": 1,
+        "charging": false,
+        "level": "normal"
+      },
+      "gameplayMode": "debugFreeCamera",
+      "originOffsetMeters": {
+        "x": 0,
+        "z": 0
+      },
+      "status": "running",
+      "error": null
+    },
+    "samples": {
+      "frameMs": [
+        100,
+        100,
+        12,
+        4.200000002980232,
+        100
+      ],
+      "gpuComputeMs": [
+        2.385312
+      ],
+      "gpuRenderMs": [
+        8.862656000000003
+      ]
+    },
+    "summary": {
+      "frameP95Ms": 100,
+      "gpuComputeP95Ms": 2.385312,
+      "gpuRenderP95Ms": 8.862656000000003
+    }
+  }
+}

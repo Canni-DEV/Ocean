@@ -7,9 +7,9 @@ import {
 } from "./OceanValidationHarness";
 
 describe("ocean validation harness", () => {
-  it("defines unique baseline, optical and PR6B validation scenarios", () => {
-    expect(OCEAN_VALIDATION_SCENARIOS).toHaveLength(31);
-    expect(new Set(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).size).toBe(31);
+  it("defines unique baseline, optical, PR6B and PR6C validation scenarios", () => {
+    expect(OCEAN_VALIDATION_SCENARIOS).toHaveLength(40);
+    expect(new Set(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).size).toBe(40);
     expect(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).toContain("aerial-storm-300");
     expect(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).toContain("optical-bow-low-sun");
     expect(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).toContain("pr6b-storm-fixed-lightning");
@@ -17,11 +17,13 @@ describe("ocean validation harness", () => {
     expect(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).toContain("pr6b-sun-column");
     expect(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).toContain("storm-surface-off");
     expect(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).toContain("storm-surface-on");
+    expect(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).toContain("pr6c-rail-reflection-on");
+    expect(OCEAN_VALIDATION_SCENARIOS.map((scenario) => scenario.id)).toContain("pr6c-horizon-300");
   });
 
   it("applies deterministic settings and query overrides", () => {
     const scenario = readOceanValidationScenario(
-      "?oceanValidation=bow-high&foam=0&seed=99&quality=medium&hour=7.05&anisotropy=0&slopeMip=0&surfacePrecipitation=0"
+      "?oceanValidation=bow-high&foam=0&seed=99&quality=medium&hour=7.05&anisotropy=0&slopeMip=0&surfacePrecipitation=0&ssr=0&refraction=0&contact=0&curvedHorizon=0"
     );
     expect(scenario).not.toBeNull();
     const settings = applyOceanValidationSettings(DEFAULT_DEBUG_SETTINGS, scenario!);
@@ -35,7 +37,11 @@ describe("ocean validation harness", () => {
       seaStateControlMode: "manual-overrides",
       oceanAnisotropyEnabled: false,
       oceanSlopeMipOverride: 0,
-      oceanSurfacePrecipitationEnabled: false
+      oceanSurfacePrecipitationEnabled: false,
+      oceanSsrEnabled: false,
+      oceanRefractionEnabled: false,
+      oceanContactEnabled: false,
+      oceanCurvedHorizonEnabled: false
     });
   });
 

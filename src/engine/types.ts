@@ -50,7 +50,19 @@ export type DebugRenderMode =
   | "ambientVolume"
   | "foamLighting"
   | "luminanceHeatmap"
-  | "clippingMask";
+  | "clippingMask"
+  | "sceneCapture"
+  | "sceneDepth"
+  | "sceneVelocity"
+  | "oceanSurfaceDepth"
+  | "ssrRaw"
+  | "ssrConfidence"
+  | "ssrHistoryWeight"
+  | "reflectionFallback"
+  | "refraction"
+  | "refractionValidity"
+  | "contact"
+  | "horizonBlend";
 
 export type SeaStateControlMode = "weather" | "manual-overrides";
 
@@ -169,6 +181,10 @@ export type EngineMetrics = {
   cloudComputeMs: number | null;
   depthPrepassMs: number | null;
   boatInteractionComputeMs: number | null;
+  oceanSceneCaptureMs: number | null;
+  oceanSurfaceDataMs: number | null;
+  oceanSsrMs: number | null;
+  oceanPr6cGpuMs: number | null;
   oceanSpectrum: Array<{
     energy: number;
     heightVariance: number;
@@ -234,6 +250,11 @@ export type DebugSettings = {
   oceanLocalOpticalPathM: number;
   /** Debug/harness gate for the small statistical roughness increase caused by precipitation. */
   oceanSurfacePrecipitationEnabled: boolean;
+  oceanSsrEnabled: boolean;
+  oceanSsrTemporalEnabled: boolean;
+  oceanRefractionEnabled: boolean;
+  oceanContactEnabled: boolean;
+  oceanCurvedHorizonEnabled: boolean;
   /** PR6B diagnostic: disables covariance-driven anisotropy without changing waves. */
   oceanAnisotropyEnabled: boolean;
   /** PR6B diagnostic: -1 selects projected mip automatically, otherwise fixes a mip level. */

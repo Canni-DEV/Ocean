@@ -8,6 +8,9 @@ import { getBoomElevationDefaultRad, setBoomElevationLimitsDeg, boomElevationRad
 import { FishingRopeSystem } from "../fishing/FishingRopeSystem";
 import { OceanPhysicsSampler } from "../ocean/OceanPhysicsSampler";
 import { OceanRenderer } from "../ocean/OceanRenderer";
+import { OceanSceneCapturePass } from "../ocean/OceanSceneCapturePass";
+import { OceanSurfaceDataPass } from "../ocean/OceanSurfaceDataPass";
+import { OceanScreenSpaceReflectionPass } from "../ocean/OceanScreenSpaceReflectionPass";
 import { BoatWaterInteraction } from "../ocean/BoatWaterInteraction";
 import {
   applyOceanValidationCamera,
@@ -71,6 +74,9 @@ export class EngineApp {
   private renderer: THREE.WebGPURenderer | null = null;
   private simulation: OceanSimulation | null = null;
   private ocean: OceanRenderer | null = null;
+  private oceanSceneCapture: OceanSceneCapturePass | null = null;
+  private oceanSurfaceData: OceanSurfaceDataPass | null = null;
+  private oceanSsr: OceanScreenSpaceReflectionPass | null = null;
   private boatInteraction: BoatWaterInteraction | null = null;
   private physics: OceanPhysicsSampler | null = null;
   private boatPhysicsSampler: OceanPhysicsSampler | null = null;
@@ -115,6 +121,9 @@ export class EngineApp {
   private error: string | null = null;
   private readonly validationScenario: OceanValidationScenario | null;
   private validationElapsedSeconds = 0;
+  private oceanSceneCaptureMs: number | null = null;
+  private oceanSurfaceDataMs: number | null = null;
+  private oceanSsrMs: number | null = null;
 
   constructor(options: EngineAppOptions) {
     this.canvas = options.canvas;
@@ -156,6 +165,9 @@ export class EngineApp {
     const previousConfiguredTime = this.settings.worldTimeHours;
     const previousDebugLight = this.settings.boatLightsOn;
     const previousFirstPerson = this.settings.firstPerson;
+    const previousPaused = this.settings.paused;
+    const previousSsr = this.settings.oceanSsrEnabled;
+    const previousTemporal = this.settings.oceanSsrTemporalEnabled;
     this.settings = { ...settings };
 
     if (Math.abs(settings.worldTimeHours - previousConfiguredTime) > 0.001) {
@@ -167,7 +179,10 @@ export class EngineApp {
       this.weatherSource = cloneWeather(this.weatherCurrent);
       this.weatherTarget = cloneWeather(WEATHER_PRESETS[this.weatherPreset]);
       this.weatherTransitionSeconds = 0;
+      this.oceanSsr?.resetHistory();
     }
+    if (Math.abs(settings.worldTimeHours - previousConfiguredTime) > 0.001
+      || settings.firstPerson !== previousFirstPerson) this.oceanSsr?.resetHistory();
 
     if (settings.quality !== this.activeQuality && this.renderer) {
       this.rebuildOcean(settings.quality);
@@ -178,6 +193,11 @@ export class EngineApp {
     if (settings.boatLightsOn !== previousDebugLight) this.systems.state.workLight = settings.boatLightsOn;
 
     this.ocean?.applySettings(settings);
+    this.oceanSsr?.setEnabled(settings.oceanSsrEnabled, settings.oceanSsrTemporalEnabled);
+    if (previousPaused !== settings.paused || previousSsr !== settings.oceanSsrEnabled
+      || previousTemporal !== settings.oceanSsrTemporalEnabled) {
+      this.oceanSsr?.resetHistory();
+    }
     this.atmosphere?.applySettings(settings);
     this.fishingRopeSystem.applySettings({
       enabled: settings.fishingRopeEnabled,
@@ -209,6 +229,9 @@ export class EngineApp {
     this.fishingRopeSystem.dispose();
     this.boatVisual.dispose();
     this.ocean?.dispose();
+    this.oceanSceneCapture?.dispose();
+    this.oceanSurfaceData?.dispose();
+    this.oceanSsr?.dispose();
     this.boatInteraction?.dispose();
     this.simulation?.dispose();
     this.atmosphere?.dispose();
@@ -252,7 +275,14 @@ export class EngineApp {
         canvas: this.canvas,
         antialias: true,
         alpha: false,
-        trackTimestamp: true
+        trackTimestamp: true,
+        // The FFT ocean already occupies the portable WebGPU minimum of 16
+        // sampled textures. PR6C adds scene color/depth/SSR; target desktop
+        // adapters expose at least 32 and are validated before device creation.
+        requiredLimits: {
+          maxSampledTexturesPerShaderStage: 32,
+          maxSamplersPerShaderStage: 16
+        }
       });
       this.renderer.outputColorSpace = THREE.SRGBColorSpace;
       this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -314,15 +344,42 @@ export class EngineApp {
     this.activeQuality = tier;
     const simulation = new OceanSimulation(tier);
     const boatInteraction = new BoatWaterInteraction(tier);
+    const screenQuality = simulation.quality.screenSpace;
+    const sceneCapture = new OceanSceneCapturePass(screenQuality.captureScale);
     const ocean = new OceanRenderer({
       scene: this.scene,
       simulation,
       boatInteraction
     });
+    const surfaceData = screenQuality.ssrEnabled
+      ? new OceanSurfaceDataPass(screenQuality.captureScale)
+      : null;
+    const captureTextures = sceneCapture.textures;
+    const ssr = surfaceData
+      ? new OceanScreenSpaceReflectionPass(
+        screenQuality,
+        captureTextures.sceneColor,
+        captureTextures.sceneNormalRoughness,
+        captureTextures.sceneVelocity,
+        surfaceData.normalRoughnessTexture,
+        surfaceData.normalRoughnessTexture
+      )
+      : null;
+    ssr?.setEnabled(this.settings.oceanSsrEnabled, this.settings.oceanSsrTemporalEnabled);
+    ocean.setScreenSpaceInputs({
+      ...captureTextures,
+      ssrColor: ssr?.texture ?? null,
+      ssrConfidence: ssr?.confidenceTexture ?? null,
+      oceanSurfaceDepth: surfaceData?.depthTexture ?? null,
+      oceanSurfaceNormalRoughness: surfaceData?.normalRoughnessTexture ?? null
+    });
     ocean.applySettings(this.settings);
     this.simulation = simulation;
     this.boatInteraction = boatInteraction;
     this.ocean = ocean;
+    this.oceanSceneCapture = sceneCapture;
+    this.oceanSurfaceData = surfaceData;
+    this.oceanSsr = ssr;
     this.physics = new OceanPhysicsSampler(simulation, boatInteraction);
     this.boatPhysicsSampler = new OceanPhysicsSampler(simulation, boatInteraction);
     this.seaStateCurrent = null;
@@ -334,14 +391,21 @@ export class EngineApp {
 
   private rebuildOcean(tier: QualityTier): void {
     this.ocean?.dispose();
+    this.oceanSceneCapture?.dispose();
+    this.oceanSurfaceData?.dispose();
+    this.oceanSsr?.dispose();
     this.boatInteraction?.dispose();
     this.simulation?.dispose();
     this.ocean = null;
+    this.oceanSceneCapture = null;
+    this.oceanSurfaceData = null;
+    this.oceanSsr = null;
     this.boatInteraction = null;
     this.simulation = null;
     this.physics = null;
     this.boatPhysicsSampler = null;
     this.createOcean(tier);
+    this.resize();
   }
 
   private readonly resize = (): void => {
@@ -353,6 +417,10 @@ export class EngineApp {
     const pixelRatio = this.renderer.getPixelRatio();
     this.atmosphere?.resize(width * pixelRatio, height * pixelRatio);
     this.sceneDepthPass.setSize(width * pixelRatio, height * pixelRatio);
+    this.oceanSceneCapture?.setSize(width * pixelRatio, height * pixelRatio);
+    this.oceanSurfaceData?.setSize(width * pixelRatio, height * pixelRatio);
+    this.oceanSsr?.setSize(width * pixelRatio, height * pixelRatio);
+    this.oceanSsr?.resetHistory();
   };
 
   private loop = (): void => {
@@ -551,6 +619,30 @@ export class EngineApp {
       this.canvas.height
     );
 
+    if (this.oceanSceneCapture) {
+      this.oceanSceneCapture.capture(this.renderer, this.scene, this.input.camera);
+      this.oceanSceneCaptureMs = this.oceanSceneCapture.captureMs;
+    }
+    if (this.oceanSurfaceData && this.oceanSsr) {
+      this.oceanSurfaceData.render(this.renderer, this.ocean, this.input.camera);
+      this.oceanSurfaceDataMs = this.oceanSurfaceData.renderMs;
+      this.oceanSsr.render(this.renderer, this.input.camera);
+      this.oceanSsrMs = this.oceanSsr.renderMs;
+    } else {
+      this.oceanSurfaceDataMs = 0;
+      this.oceanSsrMs = 0;
+    }
+    const screenTextures = this.oceanSceneCapture?.textures;
+    if (screenTextures) {
+      this.ocean.setScreenSpaceInputs({
+        ...screenTextures,
+        ssrColor: this.oceanSsr?.texture ?? null,
+        ssrConfidence: this.oceanSsr?.confidenceTexture ?? null,
+        oceanSurfaceDepth: this.oceanSurfaceData?.depthTexture ?? null,
+        oceanSurfaceNormalRoughness: this.oceanSurfaceData?.normalRoughnessTexture ?? null
+      });
+    }
+
     const depthStart = performance.now();
     this.sceneDepthPass.capture(this.renderer, this.scene, this.input.camera);
     this.depthPrepassMs = performance.now() - depthStart;
@@ -696,6 +788,7 @@ export class EngineApp {
     this.boatPhysics.applyOriginShift(shiftX, shiftZ);
     this.fishingRopeSystem.applyOriginShift(shiftX, shiftZ);
     this.boatVisual.syncFromPhysics(this.boatPhysics);
+    this.oceanSsr?.resetHistory();
   }
 
   private setDebugFreeCamera(enabled: boolean): void {
@@ -829,6 +922,14 @@ export class EngineApp {
       boatInteractionComputeMs: this.boatInteractionComputeMs,
       cloudComputeMs: this.cloudComputeMs,
       depthPrepassMs: this.depthPrepassMs,
+      oceanSceneCaptureMs: this.oceanSceneCaptureMs,
+      oceanSurfaceDataMs: this.oceanSurfaceDataMs,
+      oceanSsrMs: this.oceanSsrMs,
+      // Individual pass fields are CPU submission timings. Do not mislabel
+      // their sum as GPU time; the aggregate render timestamp remains the
+      // authoritative asynchronous GPU measurement until scoped public
+      // timestamps are available in Three.js.
+      oceanPr6cGpuMs: null,
       oceanSpectrum: this.simulation?.metrics.map((metric) => ({ ...metric })) ?? [],
       seaState: seaState ? {
         source: this.settings.seaStateControlMode,

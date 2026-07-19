@@ -13,7 +13,8 @@
     "test:run": "vitest run src",
     "test:visual": "playwright test",
     "capture:ocean-pr6b": "cross-env PR6B_ARTIFACT_SET=candidate PR6B_CAPTURE_FULL=1 PR6B_HEADFUL=1 playwright test --project=edge",
-    "capture:ocean-pr6b:chromium": "cross-env PR6B_ARTIFACT_SET=candidate PR6B_CAPTURE_FULL=1 PR6B_HEADFUL=1 playwright test --project=chromium"
+    "capture:ocean-pr6b:chromium": "cross-env PR6B_ARTIFACT_SET=candidate PR6B_CAPTURE_FULL=1 PR6B_HEADFUL=1 playwright test --project=chromium",
+    "capture:ocean-pr6c": "cross-env PR6C_ARTIFACT_SET=candidate playwright test tests/visual/ocean-pr6c.spec.ts --project=edge"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.11",

@@ -68,7 +68,19 @@
     { value: "ambientVolume", label: "Ambient Volume" },
     { value: "foamLighting", label: "Foam Lighting" },
     { value: "luminanceHeatmap", label: "Luminance Heatmap" },
-    { value: "clippingMask", label: "Clipping Mask" }
+    { value: "clippingMask", label: "Clipping Mask" },
+    { value: "sceneCapture", label: "Scene Capture" },
+    { value: "sceneDepth", label: "Ocean Scene Depth" },
+    { value: "sceneVelocity", label: "Scene Velocity" },
+    { value: "oceanSurfaceDepth", label: "Ocean Surface Depth" },
+    { value: "ssrRaw", label: "SSR Raw" },
+    { value: "ssrConfidence", label: "SSR Confidence" },
+    { value: "ssrHistoryWeight", label: "SSR History" },
+    { value: "reflectionFallback", label: "Reflection Fallback" },
+    { value: "refraction", label: "Refraction" },
+    { value: "refractionValidity", label: "Refraction Validity" },
+    { value: "contact", label: "Water Contact" },
+    { value: "horizonBlend", label: "Horizon Blend" }
   ];
 
   const atmosphereDebugModes: Array<{ value: AtmosphereDebugMode; label: string }> = [
@@ -173,6 +185,18 @@
     {
       label: "Depth Pre",
       value: metrics.depthPrepassMs === null ? "n/a" : `${metrics.depthPrepassMs.toFixed(1)} ms`
+    },
+    {
+      label: "Scene Cap",
+      value: metrics.oceanSceneCaptureMs === null ? "n/a" : `${metrics.oceanSceneCaptureMs.toFixed(1)} ms`
+    },
+    {
+      label: "Surface",
+      value: metrics.oceanSurfaceDataMs === null ? "n/a" : `${metrics.oceanSurfaceDataMs.toFixed(1)} ms`
+    },
+    {
+      label: "Ocean SSR",
+      value: metrics.oceanSsrMs === null ? "n/a" : `${metrics.oceanSsrMs.toFixed(1)} ms`
     },
     {
       label: "Sea Level",
