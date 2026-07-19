@@ -593,10 +593,21 @@ function createWaterMaterial(
     const row1 = mix(load(vec2(0, 1)), load(vec2(1, 1)), fraction.x);
     return mix(row0, row1, fraction.y);
   };
+  // Storage loads are nearest; four taps restore bilinear filtering without
+  // reclaiming the two fragment samplers released by the storage bindings above.
   const loadBoatInteraction = (node: NodeRef, uvNode: NodeRef): NodeRef => {
     const resolution = boatInteraction?.resolution ?? 1;
-    const texel = (ivec2 as any)(uvNode.mul(resolution)).clamp((ivec2 as any)(0), (ivec2 as any)(resolution - 1));
-    return node.load(texel).toReadOnly();
+    const pixel = uvNode.mul(resolution).sub(0.5);
+    const base = pixel.floor();
+    const fraction = pixel.fract();
+    const maxTexel = (ivec2 as any)(resolution - 1);
+    const load = (offset: NodeRef): NodeRef => {
+      const texel = (ivec2 as any)(base.add(offset)).clamp((ivec2 as any)(0), maxTexel);
+      return node.load(texel).toReadOnly();
+    };
+    const row0 = mix(load(vec2(0, 0)), load(vec2(1, 0)), fraction.x);
+    const row1 = mix(load(vec2(0, 1)), load(vec2(1, 1)), fraction.x);
+    return mix(row0, row1, fraction.y);
   };
 
   const boatInteractionUvAndMask = (worldXZ: NodeRef, uvOffset: NodeRef = vec2(0, 0)): { uv: NodeRef; mask: NodeRef } => {

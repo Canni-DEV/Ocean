@@ -445,7 +445,7 @@ export class CockpitRig {
 
     this.bilgeWater.position.y = 0.48 + state.bilgeLevel * 0.42;
     this.bilgeWater.visible = state.bilgeLevel > 0.01;
-    this.cabinLight.intensity = state.cabinLight ? 85 : 0;
+    this.cabinLight.intensity = state.cabinLight ? 30.5 : 0;
     this.navPort.intensity = state.navigationLights ? 24 : 0;
     this.navStarboard.intensity = state.navigationLights ? 24 : 0;
     this.anchorLight.intensity = state.anchorLight ? 70 : 0;
